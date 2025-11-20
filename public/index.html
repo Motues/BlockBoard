@@ -1,0 +1,125 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlockGame</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #2a2a2a;
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+
+        h1 { margin-bottom: 20px; font-weight: 300; letter-spacing: 2px; }
+
+        #grid {
+            display: grid;
+            /* 这里的 columns 和 rows 删掉了，改由 JS 动态生成 */
+            gap: 2px;
+            background: #444;
+            border: 4px solid #555;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            padding: 2px;
+            border-radius: 4px;
+        }
+
+        .cell {
+            background-color: #000;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: background-color 0.4s ease, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.5);
+        }
+
+        .cell:hover {
+            opacity: 0.9;
+            z-index: 1;
+            transform: scale(1.1);
+        }
+
+        .cell.white {
+            background-color: #fff;
+            transform: rotateY(180deg);
+            box-shadow: inset 0 0 2px rgba(0,0,0,0.2);
+        }
+
+        footer { margin-top: 30px; font-size: 0.9rem; color: #888; opacity: 0.8; }
+        footer span { color: #e25555; }
+    </style>
+</head>
+<body>
+
+    <h1>BlockGame</h1>
+    <div id="grid"></div>
+    <footer>Made with <span>❤️</span> by Motues</footer>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const grid = document.getElementById('grid');
+        let cells = []; // 存储 DOM 元素
+
+        // 1. 监听初始化事件 (包含配置和状态)
+        socket.on('init-game', (data) => {
+            const { config, state } = data;
+            initGrid(config, state);
+        });
+
+        // 2. 监听单个方块更新
+        socket.on('update-square', ({ index, isBlack }) => {
+            if (cells[index]) {
+                updateCellView(cells[index], isBlack);
+            }
+        });
+
+        // 初始化网格函数
+        function initGrid(config, state) {
+            // 清空现有内容（防止重连时重复生成）
+            grid.innerHTML = '';
+            cells = [];
+
+            // A. 动态设置 CSS 样式
+            // 比如: repeat(25, 30px)
+            grid.style.gridTemplateColumns = `repeat(${config.cols}, ${config.cellSize}px)`;
+            grid.style.gridTemplateRows = `repeat(${config.rows}, ${config.cellSize}px)`;
+
+            // B. 生成方块
+            const totalSquares = config.rows * config.cols;
+            
+            for (let i = 0; i < totalSquares; i++) {
+                const div = document.createElement('div');
+                div.className = 'cell';
+                // 设置单个方块大小（其实通过 grid 布局控制也可以，但这里双重保险）
+                div.style.width = `${config.cellSize}px`;
+                div.style.height = `${config.cellSize}px`;
+
+                // 设置初始颜色
+                updateCellView(div, state[i]);
+
+                div.onclick = () => {
+                    socket.emit('toggle-square', i);
+                };
+
+                grid.appendChild(div);
+                cells.push(div);
+            }
+        }
+
+        function updateCellView(el, isBlack) {
+            if (isBlack) {
+                el.classList.remove('white');
+            } else {
+                el.classList.add('white');
+            }
+        }
+    </script>
+</body>
+</html>
