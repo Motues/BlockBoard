@@ -29,6 +29,8 @@
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             padding: 2px;
             border-radius: 4px;
+            max-width: 100vw;
+            overflow: hidden;
         }
 
         .cell {
@@ -37,6 +39,8 @@
             border-radius: 2px;
             transition: background-color 0.4s ease, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             box-shadow: inset 0 0 5px rgba(0,0,0,0.5);
+            position: relative;
+            overflow: hidden;
         }
 
         .cell:hover {
@@ -51,21 +55,97 @@
             box-shadow: inset 0 0 2px rgba(0,0,0,0.2);
         }
 
+        .cell.pending::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            animation: loading 1.5s infinite;
+        }
+
+        @keyframes loading {
+            0% {
+                transform: translateX(-100%);
+            }
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
         footer { margin-top: 30px; font-size: 0.9rem; color: #888; opacity: 0.8; }
         footer span { color: #e25555; }
+
+        /* 移动端适配 */
+        @media screen and (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            h1 {
+                font-size: 1.5rem;
+                margin-bottom: 15px;
+            }
+            
+            .cell {
+                touch-action: manipulation; /* 防止iOS上的双击缩放 */
+            }
+            
+            .cell:hover {
+                transform: none; /* 在触摸屏上禁用hover效果 */
+            }
+            
+            .cell:active {
+                opacity: 0.9;
+                transform: scale(1.1); /* 点击时的反馈效果 */
+            }
+        }
+        .link-line{
+        color: inherit;
+        /* transition: color 0.3s ease; */
+        text-decoration: none;
+        position: relative;
+        display: inline-block;
+    }
+    
+    .link-line::before {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        border-bottom-style: dotted;
+        border-bottom-width: 2px;
+        /* background: currentColor; */
+        transition: transform 0.3s ease;
+        transform-origin: right;
+        transform: scaleX(1);
+    }
+    
+    .link-line:hover {
+        color: var(--link-color);
+    }
+    
+    .link-line:hover::before {
+        transform-origin: right;
+        transform: scaleX(0);
+    }
     </style>
 </head>
 <body>
 
     <h1>BlockGame</h1>
     <div id="grid"></div>
-    <footer>Made with <span>❤️</span> by Motues</footer>
+    <footer>Made with <span>❤️</span> by <a href="https://motues.top" class="link-line">Motues</a></footer>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
         const grid = document.getElementById('grid');
         let cells = []; // 存储 DOM 元素
+        let pendingRequests = new Set(); // 存储待处理的请求
 
         // 1. 监听初始化事件 (包含配置和状态)
         socket.on('init-game', (data) => {
@@ -75,8 +155,12 @@
 
         // 2. 监听单个方块更新
         socket.on('update-square', ({ index, isBlack }) => {
+            // 移除该索引的待处理状态
+            pendingRequests.delete(index);
             if (cells[index]) {
                 updateCellView(cells[index], isBlack);
+                // 确保移除待处理状态类
+                cells[index].classList.remove('pending');
             }
         });
 
@@ -86,10 +170,21 @@
             grid.innerHTML = '';
             cells = [];
 
+            // 计算适合移动端的单元格大小
+            let cellSize = config.cellSize;
+            // 只在移动端调整单元格大小，保持原有布局结构
+            if (window.innerWidth <= 768) {
+                // 根据屏幕宽度计算合适的单元格大小
+                const maxWidth = window.innerWidth * 0.95;
+                const maxCellSize = Math.floor(maxWidth / config.cols);
+                // 确保单元格不会太小
+                cellSize = Math.max(8, maxCellSize);
+            }
+
             // A. 动态设置 CSS 样式
             // 比如: repeat(25, 30px)
-            grid.style.gridTemplateColumns = `repeat(${config.cols}, ${config.cellSize}px)`;
-            grid.style.gridTemplateRows = `repeat(${config.rows}, ${config.cellSize}px)`;
+            grid.style.gridTemplateColumns = `repeat(${config.cols}, ${cellSize}px)`;
+            grid.style.gridTemplateRows = `repeat(${config.rows}, ${cellSize}px)`;
 
             // B. 生成方块
             const totalSquares = config.rows * config.cols;
@@ -98,14 +193,22 @@
                 const div = document.createElement('div');
                 div.className = 'cell';
                 // 设置单个方块大小（其实通过 grid 布局控制也可以，但这里双重保险）
-                div.style.width = `${config.cellSize}px`;
-                div.style.height = `${config.cellSize}px`;
+                div.style.width = `${cellSize}px`;
+                div.style.height = `${cellSize}px`;
 
                 // 设置初始颜色
                 updateCellView(div, state[i]);
 
                 div.onclick = () => {
-                    socket.emit('toggle-square', i);
+                    // 如果该方块已经有待处理请求，则不发送新请求
+                    if (!pendingRequests.has(i)) {
+                        // 添加到待处理集合
+                        pendingRequests.add(i);
+                        // 添加过渡状态类
+                        div.classList.add('pending');
+                        // 发送切换请求
+                        socket.emit('toggle-square', i);
+                    }
                 };
 
                 grid.appendChild(div);
