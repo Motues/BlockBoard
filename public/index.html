@@ -4,7 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BlockGame</title>
+    <title>BlockBoard</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Eagle+Lake&display=swap">
     <style>
         body {
             display: flex;
@@ -15,20 +16,25 @@
             background-color: #2a2a2a;
             margin: 0;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: #fff;
+            color: #fffefe;
         }
 
-        h1 { margin-bottom: 20px; font-weight: 300; letter-spacing: 2px; }
+        h1 { 
+            margin-bottom: 20px;
+            font-weight: 300;
+            letter-spacing: 2px;
+            font-family: "Eagle Lake", cursive;
+        }
 
         #grid {
             display: grid;
-            /* 这里的 columns 和 rows 删掉了，改由 JS 动态生成 */
+            /* 这里的 columns 和 rows 别删了，改由 JS 动态生成 */
             gap: 2px;
             background: #444;
-            border: 4px solid #555;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            /* border: 1px solid #555;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5); */
             padding: 2px;
-            border-radius: 4px;
+            /* border-radius: 4px; */
             max-width: 100vw;
             overflow: hidden;
         }
@@ -36,9 +42,9 @@
         .cell {
             background-color: #000;
             cursor: pointer;
-            border-radius: 2px;
+            /* border-radius: 2px; */
             transition: background-color 0.4s ease, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            box-shadow: inset 0 0 5px rgba(0,0,0,0.5);
+            /* box-shadow: inset 0 0 5px rgba(0,0,0,0.5); */
             position: relative;
             overflow: hidden;
         }
@@ -75,8 +81,66 @@
             }
         }
 
+        /* 添加旋转容器 */
+        .rotatable-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: transform 0.5s ease;
+        }
+
+        /* 添加旋转提示样式 */
+        .rotation-warning {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .rotation-icon {
+            width: 100px;
+            height: 100px;
+            margin-bottom: 20px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M0 0h24v24H0z' fill='none'/%3E%3Cpath d='M8.5 12l1.5-4 1.5 4h2.91l-2.42 6.35c-.39 1.02-.59 1.65-1.59 1.65s-1.2-.63-1.59-1.65L5.59 12H8.5zm7.5-6l-1.5 4H12V4h-2v6H7L5.5 6 4 10h2.91l2.42-6.35C9.72 2.63 10.28 2 11 2s1.28.63 1.67 1.65L15.09 10H18l-1.5-4-1.5-4z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            animation: rotateAnimation 2s infinite;
+        }
+
+        @keyframes rotateAnimation {
+            0% { transform: rotate(0); }
+            25% { transform: rotate(90deg); }
+            50% { transform: rotate(180deg); }
+            75% { transform: rotate(270deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .rotated {
+            transform: rotate(90deg);
+            transform-origin: center center;
+        }
+
         footer { margin-top: 30px; font-size: 0.9rem; color: #888; opacity: 0.8; }
         footer span { color: #e25555; }
+        
+        /* 在线人数显示样式 */
+        .online-users {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #aaa;
+            text-align: center;
+        }
 
         /* 移动端适配 */
         @media screen and (max-width: 768px) {
@@ -102,6 +166,7 @@
                 transform: scale(1.1); /* 点击时的反馈效果 */
             }
         }
+        
         .link-line{
         color: inherit;
         /* transition: color 0.3s ease; */
@@ -136,21 +201,30 @@
 </head>
 <body>
 
-    <h1>BlockGame</h1>
-    <div id="grid"></div>
-    <footer>Made with <span>❤️</span> by <a href="https://motues.top" class="link-line">Motues</a></footer>
+    <div id="rotatableContainer" class="rotatable-container">
+        <h1>BlockBoard</h1>
+        <div id="grid"></div>
+        <footer>
+            <div class="online-users">当前在线: <span id="onlineCount">0</span> 人</div>
+            <p>Made with <span>❤️</span> by <a href="https://motues.top" class="link-line">Motues</a></p>
+        </footer>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
         const grid = document.getElementById('grid');
+        const rotatableContainer = document.getElementById('rotatableContainer');
         let cells = []; // 存储 DOM 元素
         let pendingRequests = new Set(); // 存储待处理的请求
+        let isRotated = false; // 是否已经旋转
+        let rotationWarning = null; // 旋转提示元素
 
         // 1. 监听初始化事件 (包含配置和状态)
         socket.on('init-game', (data) => {
             const { config, state } = data;
             initGrid(config, state);
+            checkScreenOrientation(); // 检查屏幕方向
         });
 
         // 2. 监听单个方块更新
@@ -163,6 +237,76 @@
                 cells[index].classList.remove('pending');
             }
         });
+
+        // 3. 监听在线人数更新
+        socket.on('online-users', (count) => {
+            const onlineCountElement = document.getElementById('onlineCount');
+            if (onlineCountElement) {
+                onlineCountElement.textContent = count.toString();
+            }
+        });
+
+        // 检查屏幕方向并处理旋转
+        function checkScreenOrientation() {
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+            
+            // 如果宽度小于高度，则显示旋转提示
+            if (screenWidth < screenHeight) {
+                showRotationWarning();
+            } else {
+                hideRotationWarning();
+            }
+        }
+
+        // 显示旋转提示
+        function showRotationWarning() {
+            if (!rotationWarning) {
+                rotationWarning = document.createElement('div');
+                rotationWarning.className = 'rotation-warning';
+                rotationWarning.innerHTML = `
+                    <div class="rotation-icon"></div>
+                    <h2>请将设备横屏使用</h2>
+                    <p>为了获得最佳体验，请关闭自动旋转并横屏使用</p>
+                    <p>这样可以看到与电脑端相同的效果</p>
+                    <p style="margin-top: 20px; font-size: 0.9rem; color: #ccc;">点击任意位置继续</p>
+                `;
+                document.body.appendChild(rotationWarning);
+                
+                // 添加点击事件监听器，点击后只隐藏提示，但保持网格旋转
+                rotationWarning.addEventListener('click', function() {
+                    if (rotationWarning) {
+                        rotationWarning.remove();
+                        rotationWarning = null;
+                    }
+                });
+            }
+            
+            // 旋转整个容器
+            if (!isRotated) {
+                rotatableContainer.classList.add('rotated');
+                isRotated = true;
+            }
+        }
+
+        // 隐藏旋转提示（仅在屏幕真正横屏时调用）
+        function hideRotationWarning() {
+            if (rotationWarning) {
+                rotationWarning.remove();
+                rotationWarning = null;
+            }
+            
+            // 只有在屏幕横屏时才取消旋转
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+            if (screenWidth >= screenHeight && isRotated) {
+                rotatableContainer.classList.remove('rotated');
+                isRotated = false;
+            }
+        }
+
+        // 监听窗口大小变化
+        window.addEventListener('resize', checkScreenOrientation);
 
         // 初始化网格函数
         function initGrid(config, state) {

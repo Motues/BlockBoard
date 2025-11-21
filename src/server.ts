@@ -19,8 +19,15 @@ const io = new Server(httpServer);
 const TOTAL_SQUARES = gameConfig.rows * gameConfig.cols;
 const gridState: boolean[] = new Array(TOTAL_SQUARES).fill(true);
 
+// 在线用户数
+let onlineUsers = 0;
+
 io.on('connection', (socket: Socket) => {
-    // 3. 将“配置”和“状态”打包一起发送给新用户
+    // 增加在线用户数并广播
+    onlineUsers++;
+    io.emit('online-users', onlineUsers);
+    
+    // 3. 将"配置"和"状态"打包一起发送给新用户
     // 这样前端才知道要画多少行、多少列
     socket.emit('init-game', {
         config: gameConfig,
@@ -35,6 +42,12 @@ io.on('connection', (socket: Socket) => {
                 isBlack: gridState[index]
             });
         }
+    });
+    
+    // 当用户断开连接时减少在线人数
+    socket.on('disconnect', () => {
+        onlineUsers--;
+        io.emit('online-users', onlineUsers);
     });
 });
 
