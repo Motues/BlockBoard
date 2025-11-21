@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Eagle+Lake&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
     <style>
         body {
             display: flex;
@@ -15,7 +15,7 @@
             min-height: 100vh;
             background-color: #2a2a2a;
             margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: "Press Start 2P", 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fffefe;
         }
 
@@ -23,7 +23,7 @@
             margin-bottom: 20px;
             font-weight: 300;
             letter-spacing: 2px;
-            font-family: "Eagle Lake", cursive;
+            font-family: "Press Start 2P", cursive;
         }
 
         #grid {
@@ -107,15 +107,46 @@
             padding: 20px;
         }
 
+        /* 修改图标样式，使用更直观的手机旋转图标 */
         .rotation-icon {
-            width: 100px;
-            height: 100px;
+            width: 80px;
+            height: 80px;
             margin-bottom: 20px;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M0 0h24v24H0z' fill='none'/%3E%3Cpath d='M8.5 12l1.5-4 1.5 4h2.91l-2.42 6.35c-.39 1.02-.59 1.65-1.59 1.65s-1.2-.63-1.59-1.65L5.59 12H8.5zm7.5-6l-1.5 4H12V4h-2v6H7L5.5 6 4 10h2.91l2.42-6.35C9.72 2.63 10.28 2 11 2s1.28.63 1.67 1.65L15.09 10H18l-1.5-4-1.5-4z'/%3E%3C/svg%3E");
+            /* 这是一个极简的手机边框 SVG，线条风格，看起来更精致 */
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='2' width='14' height='20' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='12' y1='18' x2='12.01' y2='18'%3E%3C/line%3E%3C/svg%3E");
             background-repeat: no-repeat;
             background-position: center;
             background-size: contain;
-            animation: rotateAnimation 2s infinite;
+            /* 动画：模拟手机从竖屏转到横屏 */
+            animation: rotateDevice 2.5s ease-in-out infinite;
+        }
+
+        @keyframes rotateDevice {
+            0% { 
+                transform: rotate(0deg); 
+                opacity: 1;
+            }
+            20% { 
+                transform: rotate(0deg); 
+            }
+            40% { 
+                /* 旋转到横屏 */
+                transform: rotate(-90deg); 
+            }
+            80% { 
+                /* 保持横屏一会儿 */
+                transform: rotate(-90deg); 
+                opacity: 1;
+            }
+            90% {
+                /* 快速淡出，准备重置 */
+                opacity: 0; 
+            }
+            100% { 
+                /* 瞬间回到初始状态（不可见） */
+                transform: rotate(0deg); 
+                opacity: 0;
+            }
         }
 
         @keyframes rotateAnimation {
@@ -126,12 +157,49 @@
             100% { transform: rotate(360deg); }
         }
 
+        /* 强制旋转后的样式修正 */
         .rotated {
-            transform: rotate(90deg);
-            transform-origin: center center;
+            /* 关键：打破文档流，强制居中 */
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            
+            /* 关键：交换宽高。宽度变成屏幕高度，高度变成屏幕宽度 */
+            width: 100vh; 
+            height: 100vw;
+            
+            /* 关键：居中并旋转。先移动中心点，再旋转 */
+            transform: translate(-50%, -50%) rotate(90deg);
+            
+            /* 确保内容居中显示 */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            
+            /* 防止旋转后可能出现的滚动条问题 */
+            overflow-y: auto; 
+            overflow-x: hidden;
+            background-color: #2a2a2a; /* 确保背景色覆盖 */
+            z-index: 999;
         }
 
-        footer { margin-top: 30px; font-size: 0.9rem; color: #888; opacity: 0.8; }
+        /* 旋转状态下，针对 grid 的特殊处理 */
+        .rotated #grid {
+            /* 旋转后，最大宽度不应受限于原来的 100vw (现在的短边)，而应该是 100vh (现在的长边) */
+            max-width: 95vh !important;
+            max-height: 90vw !important;
+        }
+
+        /* 当处于旋转模式时，禁止 body 滚动，防止双重滚动条 */
+        body.lock-scroll {
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+
+        footer { margin-top: 30px; font-size: 0.7rem; color: #888; opacity: 0.8; }
         footer span { color: #e25555; }
         
         /* 在线人数显示样式 */
@@ -167,7 +235,7 @@
             }
         }
         
-        .link-line{
+    .link-line{
         color: inherit;
         /* transition: color 0.3s ease; */
         text-decoration: none;
@@ -178,11 +246,11 @@
     .link-line::before {
         content: "";
         position: absolute;
-        bottom: 0;
+        bottom: -2px;
         left: 0;
         width: 100%;
         border-bottom-style: dotted;
-        border-bottom-width: 2px;
+        border-bottom-width: 3px;
         /* background: currentColor; */
         transition: transform 0.3s ease;
         transform-origin: right;
@@ -205,7 +273,7 @@
         <h1>BlockBoard</h1>
         <div id="grid"></div>
         <footer>
-            <div class="online-users">当前在线: <span id="onlineCount">0</span> 人</div>
+            <div class="online-users">Online User: <span id="onlineCount">0</span></div>
             <p>Made with <span>❤️</span> by <a href="https://motues.top" class="link-line">Motues</a></p>
         </footer>
     </div>
@@ -259,48 +327,60 @@
             }
         }
 
-        // 显示旋转提示
+       // 显示旋转提示
         function showRotationWarning() {
             if (!rotationWarning) {
                 rotationWarning = document.createElement('div');
                 rotationWarning.className = 'rotation-warning';
                 rotationWarning.innerHTML = `
                     <div class="rotation-icon"></div>
-                    <h2>请将设备横屏使用</h2>
-                    <p>为了获得最佳体验，请关闭自动旋转并横屏使用</p>
-                    <p>这样可以看到与电脑端相同的效果</p>
-                    <p style="margin-top: 20px; font-size: 0.9rem; color: #ccc;">点击任意位置继续</p>
+                    <h2>建议横屏浏览</h2>
+                    <p>检测到当前为竖屏模式</p>
+                    <p>请关闭自动旋转，在横屏下体验更佳</p>
+                    <p>Switch to landscape mode for better experience.</p>
+                    <p style="margin-top: 20px; font-size: 0.9rem; color: #888; border: 1px solid #555; padding: 5px 10px; border-radius: 4px;">点击屏幕继续</p>
                 `;
                 document.body.appendChild(rotationWarning);
                 
-                // 添加点击事件监听器，点击后只隐藏提示，但保持网格旋转
                 rotationWarning.addEventListener('click', function() {
+                    // 点击后，移除提示层，但保留旋转状态
                     if (rotationWarning) {
                         rotationWarning.remove();
                         rotationWarning = null;
                     }
+                    // 强制旋转容器
+                    forceRotation();
                 });
-            }
-            
-            // 旋转整个容器
-            if (!isRotated) {
-                rotatableContainer.classList.add('rotated');
-                isRotated = true;
             }
         }
 
-        // 隐藏旋转提示（仅在屏幕真正横屏时调用）
+        function forceRotation() {
+            if (!isRotated) {
+                rotatableContainer.classList.add('rotated');
+                document.body.classList.add('lock-scroll'); // 锁定 body 滚动
+                isRotated = true;
+                
+                // 强制旋转后，可能需要重新调整网格大小以适应新的"视觉宽度"
+                // 这里可以选择性触发一次 resize 事件或者重新计算样式，
+                // 但通常 CSS 的 vh/vw 切换已经足够。
+            }
+        }
+
+        // 隐藏旋转提示（当用户物理旋转手机变成横屏时调用）
         function hideRotationWarning() {
             if (rotationWarning) {
                 rotationWarning.remove();
                 rotationWarning = null;
             }
             
-            // 只有在屏幕横屏时才取消旋转
             const screenWidth = window.innerWidth;
             const screenHeight = window.innerHeight;
-            if (screenWidth >= screenHeight && isRotated) {
+            
+            // 如果现在物理上已经是横屏了 (宽 > 高)
+            if (screenWidth >= screenHeight) {
+                // 移除 CSS 强制旋转，恢复正常流
                 rotatableContainer.classList.remove('rotated');
+                document.body.classList.remove('lock-scroll');
                 isRotated = false;
             }
         }
