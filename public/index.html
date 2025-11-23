@@ -19,8 +19,6 @@
             font-family: "Press Start 2P", 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fffefe;
         }
-
-        /* 滚动条样式 */
         ::-webkit-scrollbar {
             width: 10px;
             height: 10px;
@@ -49,7 +47,6 @@
 
         #grid {
             display: grid;
-            /* 这里的 columns 和 rows 别删了，改由 JS 动态生成 */
             gap: 2px;
             background: #444;
             /* border: 1px solid #555;
@@ -57,7 +54,7 @@
             padding: 2px;
             /* border-radius: 4px; */
             max-width: 100vw;
-            overflow: auto; /* 改为 auto 而不是 hidden */
+            overflow: auto; 
         }
 
         .cell {
@@ -102,7 +99,7 @@
             }
         }
 
-        /* 添加旋转容器 */
+        /* Add a rotating container */
         .rotatable-container {
             display: flex;
             flex-direction: column;
@@ -110,7 +107,7 @@
             transition: transform 0.5s ease;
         }
 
-        /* 添加旋转提示样式 */
+        /* Add a rotating hint style */
         .rotation-warning {
             position: fixed;
             top: 0;
@@ -128,17 +125,16 @@
             padding: 20px;
         }
 
-        /* 修改图标样式，使用更直观的手机旋转图标 */
         .rotation-icon {
             width: 80px;
             height: 80px;
             margin-bottom: 20px;
-            /* 这是一个极简的手机边框 SVG，线条风格，看起来更精致 */
+            /* A minimalist phone frame SVG */
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='2' width='14' height='20' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='12' y1='18' x2='12.01' y2='18'%3E%3C/line%3E%3C/svg%3E");
             background-repeat: no-repeat;
             background-position: center;
             background-size: contain;
-            /* 动画：模拟手机从竖屏转到横屏 */
+            /* Animation: Simulate a mobile phone rotating from portrait to landscape orientation */
             animation: rotateDevice 2.5s ease-in-out infinite;
         }
 
@@ -151,20 +147,16 @@
                 transform: rotate(0deg); 
             }
             40% { 
-                /* 旋转到横屏 */
                 transform: rotate(-90deg); 
             }
             80% { 
-                /* 保持横屏一会儿 */
                 transform: rotate(-90deg); 
                 opacity: 1;
             }
             90% {
-                /* 快速淡出，准备重置 */
                 opacity: 0; 
             }
             100% { 
-                /* 瞬间回到初始状态（不可见） */
                 transform: rotate(0deg); 
                 opacity: 0;
             }
@@ -178,41 +170,34 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* 强制旋转后的样式修正 */
+        /* Style adjustments after forced rotation */
         .rotated {
-            /* 关键：打破文档流，强制居中 */
             position: fixed;
             top: 50%;
             left: 50%;
-            
-            /* 关键：交换宽高。宽度变成屏幕高度，高度变成屏幕宽度 */
             width: 100vh; 
             height: 100vw;
-            
-            /* 关键：居中并旋转。先移动中心点，再旋转 */
             transform: translate(-50%, -50%) rotate(90deg);
-            
-            /* 确保内容居中显示 */
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            
-            /* 防止旋转后可能出现的滚动条问题 */
             overflow-y: auto; 
             overflow-x: hidden;
-            background-color: #2a2a2a; /* 确保背景色覆盖 */
+            background-color: #2a2a2a;
             z-index: 999;
         }
 
-        /* 旋转状态下，针对 grid 的特殊处理 */
+        /*
+        After rotation, the maximum width should not be constrained 
+        to the original 100vw (now the shorter side),
+        but should be 100vh (now the longer side).
+        */
         .rotated #grid {
-            /* 旋转后，最大宽度不应受限于原来的 100vw (现在的短边)，而应该是 100vh (现在的长边) */
             max-width: 95vh !important;
             max-height: 90vw !important;
         }
 
-        /* 当处于旋转模式时，禁止 body 滚动，但允许网格区域滚动 */
         body.lock-scroll {
             overflow: hidden;
             position: fixed;
@@ -231,8 +216,6 @@
             max-width: 95vh !important;
             max-height: 90vw !important;
         }
-        
-        /* 滚动条样式 */
         #grid-wrapper::-webkit-scrollbar {
             width: 10px;
             height: 10px;
@@ -255,7 +238,6 @@
         footer { margin-top: 30px; font-size: 0.7rem; color: #888; opacity: 0.8; }
         footer span { color: #e25555; }
         
-        /* 在线人数显示样式 */
         .online-users {
             margin-top: 10px;
             font-size: 0.8rem;
@@ -263,7 +245,7 @@
             text-align: center;
         }
 
-        /* 移动端适配 */
+        /* Mobile device adaptation */
         @media screen and (max-width: 768px) {
             body {
                 padding: 10px;
@@ -275,16 +257,16 @@
             }
             
             .cell {
-                touch-action: manipulation; /* 防止iOS上的双击缩放 */
+                touch-action: manipulation; 
             }
             
             .cell:hover {
-                transform: none; /* 在触摸屏上禁用hover效果 */
+                transform: none;
             }
             
             .cell:active {
                 opacity: 0.9;
-                transform: scale(1.1); /* 点击时的反馈效果 */
+                transform: scale(1.1);
             }
             #grid {
                 gap: 1px;
@@ -327,7 +309,7 @@
 
     <div id="rotatableContainer" class="rotatable-container">
         <h1>BlockBoard</h1>
-        <!-- 添加一个包装器用于滚动 -->
+        <!-- Add a wrapper for scrolling -->
         <div id="grid-wrapper">
             <div id="grid"></div>
         </div>
@@ -342,30 +324,28 @@
         const socket = io();
         const grid = document.getElementById('grid');
         const rotatableContainer = document.getElementById('rotatableContainer');
-        let cells = []; // 存储 DOM 元素
-        let pendingRequests = new Set(); // 存储待处理的请求
-        let isRotated = false; // 是否已经旋转
-        let rotationWarning = null; // 旋转提示元素
+        let cells = []; // Storing DOM elements
+        let pendingRequests = new Set(); // Store pending requests
+        let isRotated = false;
+        let rotationWarning = null;
 
-        // 1. 监听初始化事件 (包含配置和状态)
+        // 1. Monitoring Initialization Event (Including Configuration and Status)
         socket.on('init-game', (data) => {
             const { config, state } = data;
             initGrid(config, state);
-            checkScreenOrientation(); // 检查屏幕方向
+            checkScreenOrientation();
         });
 
-        // 2. 监听单个方块更新
+        // 2. Listen for updates to individual blocks
         socket.on('update-square', ({ index, isBlack }) => {
-            // 移除该索引的待处理状态
             pendingRequests.delete(index);
             if (cells[index]) {
                 updateCellView(cells[index], isBlack);
-                // 确保移除待处理状态类
                 cells[index].classList.remove('pending');
             }
         });
 
-        // 3. 监听在线人数更新
+        // 2. Listen for updates on individual blocks
         socket.on('online-users', (count) => {
             const onlineCountElement = document.getElementById('onlineCount');
             if (onlineCountElement) {
@@ -373,12 +353,11 @@
             }
         });
 
-        // 检查屏幕方向并处理旋转
+        // Check screen orientation and handle rotation
         function checkScreenOrientation() {
             const screenWidth = window.innerWidth;
             const screenHeight = window.innerHeight;
             
-            // 如果宽度小于高度，则显示旋转提示
             if (screenWidth < screenHeight) {
                 showRotationWarning();
             } else {
@@ -386,7 +365,7 @@
             }
         }
 
-       // 显示旋转提示
+       // Display rotation prompt
         function showRotationWarning() {
             if (!rotationWarning) {
                 rotationWarning = document.createElement('div');
@@ -402,12 +381,11 @@
                 document.body.appendChild(rotationWarning);
                 
                 rotationWarning.addEventListener('click', function() {
-                    // 点击后，移除提示层，但保留旋转状态
+                    // After clicking, remove the prompt layer but retain the rotation state
                     if (rotationWarning) {
                         rotationWarning.remove();
                         rotationWarning = null;
                     }
-                    // 强制旋转容器
                     forceRotation();
                 });
             }
@@ -416,16 +394,11 @@
         function forceRotation() {
             if (!isRotated) {
                 rotatableContainer.classList.add('rotated');
-                document.body.classList.add('lock-scroll'); // 锁定 body 滚动
+                document.body.classList.add('lock-scroll');
                 isRotated = true;
-                
-                // 强制旋转后，可能需要重新调整网格大小以适应新的"视觉宽度"
-                // 这里可以选择性触发一次 resize 事件或者重新计算样式，
-                // 但通常 CSS 的 vh/vw 切换已经足够。
             }
         }
 
-        // 隐藏旋转提示（当用户物理旋转手机变成横屏时调用）
         function hideRotationWarning() {
             if (rotationWarning) {
                 rotationWarning.remove();
@@ -435,61 +408,46 @@
             const screenWidth = window.innerWidth;
             const screenHeight = window.innerHeight;
             
-            // 如果现在物理上已经是横屏了 (宽 > 高)
             if (screenWidth >= screenHeight) {
-                // 移除 CSS 强制旋转，恢复正常流
                 rotatableContainer.classList.remove('rotated');
                 document.body.classList.remove('lock-scroll');
                 isRotated = false;
             }
         }
 
-        // 监听窗口大小变化
         window.addEventListener('resize', checkScreenOrientation);
 
-        // 初始化网格函数
+        // Initialize grid
         function initGrid(config, state) {
-            // 清空现有内容（防止重连时重复生成）
             grid.innerHTML = '';
             cells = [];
 
-            // 计算适合移动端的单元格大小
             let cellSize = config.cellSize;
-            // 只在移动端调整单元格大小，保持原有布局结构
             if (window.innerWidth <= 768) {
-                // 根据屏幕宽度计算合适的单元格大小
                 const maxWidth = window.innerWidth * 0.95;
                 const maxCellSize = Math.floor(maxWidth / config.cols);
-                // 确保单元格不会太小
                 cellSize = Math.max(8, maxCellSize);
             }
 
-            // A. 动态设置 CSS 样式
-            // 比如: repeat(25, 30px)
+            // Dynamically Set CSS Styles
             grid.style.gridTemplateColumns = `repeat(${config.cols}, ${cellSize}px)`;
             grid.style.gridTemplateRows = `repeat(${config.rows}, ${cellSize}px)`;
 
-            // B. 生成方块
+            // B. Generate Blocks
             const totalSquares = config.rows * config.cols;
             
             for (let i = 0; i < totalSquares; i++) {
                 const div = document.createElement('div');
                 div.className = 'cell';
-                // 设置单个方块大小（其实通过 grid 布局控制也可以，但这里双重保险）
                 div.style.width = `${cellSize}px`;
                 div.style.height = `${cellSize}px`;
 
-                // 设置初始颜色
                 updateCellView(div, state[i]);
 
                 div.onclick = () => {
-                    // 如果该方块已经有待处理请求，则不发送新请求
                     if (!pendingRequests.has(i)) {
-                        // 添加到待处理集合
                         pendingRequests.add(i);
-                        // 添加过渡状态类
                         div.classList.add('pending');
-                        // 发送切换请求
                         socket.emit('toggle-square', i);
                     }
                 };
