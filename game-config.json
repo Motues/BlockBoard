@@ -1,6 +1,6 @@
 {
   "rows": 50,
-  "cols":10,
+  "cols":100,
   "cellSize": 15,
   "port": 33333
 }
