@@ -238,3 +238,65 @@ h1 {
     50% { opacity: 1; }
     100% { opacity: 0; }
 }
+
+/* 提示弹窗样式 */
+.hint-popup {
+    top: 20px;
+    right: 20px;
+    left: auto;
+    transform: translateX(120%);
+    padding: 16px 24px;
+    text-align: left;
+    max-width: 300px;
+    opacity: 1;
+    visibility: visible;
+    border-radius: 8px; /* 更小的圆角 */
+    transition: transform 0.3s ease-out;
+}
+
+.hint-popup:not(.hidden) {
+    transform: translateX(0);
+}
+
+.hint-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 50%;
+    transition: background-color 0.2s;
+}
+
+.hint-close:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.hint-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.hint-text {
+    font-size: 0.7rem;
+    color: #ffffff;
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.hint-text-en {
+    font-size: 0.6rem;
+    color: #ffffff;
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.hint-text-en ul {
+    padding-left: 20px;
+    margin: 0;
+}
+
+.hint-text-en li {
+    margin: 5px 0;
+}

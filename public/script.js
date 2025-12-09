@@ -30,6 +30,39 @@ let viewState = {
     hasMoved: false
 };
 
+// 显示提示弹窗并在一段时间后自动隐藏
+function showHintPopup() {
+    const hintPopup = document.getElementById('hint-popup');
+    
+    // 显示提示弹窗
+    hintPopup.classList.remove('hidden');
+    
+    // 5秒后自动隐藏提示弹窗
+    setTimeout(() => {
+        hintPopup.classList.add('hidden');
+    }, 10000);
+}
+
+// 关闭提示弹窗
+function closeHintPopup() {
+    const hintPopup = document.getElementById('hint-popup');
+    hintPopup.classList.add('hidden');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const hintPopup = document.getElementById('hint-popup');
+    
+    // 页面加载后延迟1秒显示提示弹窗
+    setTimeout(() => {
+        hintPopup.classList.remove('hidden');
+    }, 1000);
+    
+    // 5秒后自动隐藏提示弹窗
+    setTimeout(() => {
+        hintPopup.classList.add('hidden');
+    }, 11000);
+});
+
 // --- 设置按钮点击处理 (已优化渐变效果) ---
 function toggleOptionsPanel() {
     isPanelOpen = !isPanelOpen;
