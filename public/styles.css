@@ -134,6 +134,53 @@ h1 {
     visibility: hidden; 
 }
 
+/* Tooltip styles for option items */
+.option-item {
+    position: relative;
+}
+
+.option-item::before {
+    content: attr(data-title);
+    position: absolute;
+    right: calc(100% + 15px);
+    top: 50%;
+    transform: translateY(-50%);
+    background-color: rgba(30, 30, 30, 0.9);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 0.6rem;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1000;
+}
+
+.option-item::after {
+    content: "";
+    position: absolute;
+    right: calc(100% + 5px);
+    top: 50%;
+    transform: translateY(-50%);
+    border: 5px solid transparent;
+    border-left: 0;
+    border-right-color: rgba(30, 30, 30, 0.9);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1000;
+}
+
+.option-item:hover::before,
+.option-item:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
 
 /* --- 视口与网格 --- */
 #viewport {

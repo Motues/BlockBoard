@@ -237,3 +237,48 @@ window.addEventListener('resize', () => {
     viewState.translateY = clamp(viewState.translateY, bounds.minY, bounds.maxY);
     updateTransform();
 });
+
+// --- 图片保存功能 ---
+function saveAsImage() {
+    // 隐藏 UI 元素以确保截图干净
+    const uiElements = document.querySelectorAll('.glass-panel');
+    uiElements.forEach(el => el.style.visibility = 'hidden');
+
+    // 获取要截图的元素（包含网格的容器）
+    const elementToCapture = document.getElementById('grid-container'); 
+    
+    // 使用 html2canvas 进行截图
+    html2canvas(elementToCapture, {
+        allowTaint: true,
+        useCORS: true,
+        backgroundColor: '#222222', // 使用 CSS 变量中的背景色
+        scale: 2 // 提高分辨率
+    }).then(canvas => {
+        // 创建一个临时链接用于下载
+        const imageURL = canvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = 'BlockBoard_Snapshot.png';
+        link.href = imageURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // 截图完成后，恢复 UI 元素的可见性
+        uiElements.forEach(el => el.style.visibility = ''); 
+        
+        // 特别处理选项面板，因为它可能需要恢复 'hidden' 类的逻辑
+        if (!isPanelOpen) {
+            optionsPanel.style.visibility = 'hidden';
+        }
+    }).catch(error => {
+        console.error('Error capturing image:', error);
+        // 确保即使出错也恢复 UI
+        uiElements.forEach(el => el.style.visibility = '');
+        if (!isPanelOpen) {
+            optionsPanel.style.visibility = 'hidden';
+        }
+    });
+    
+    // 截图后自动关闭选项面板
+    toggleOptionsPanel(); 
+}

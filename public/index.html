@@ -31,14 +31,17 @@
     </div>
 
     <div id="options-panel" class="glass-panel hidden">
-        <div class="option-item" onclick="console.log('Option: Reset View')">
+        <!-- <div class="option-item" onclick="console.log('Option: Reset View')" data-title="Reset View">
              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.55 13.59A8 8 0 0 1 12 4a8 8 0 0 1 7.45 4.41"></path><path d="M20.45 10.41A8 8 0 0 1 12 20a8 8 0 0 1-7.45-4.41"></path></svg>
         </div>
-        <div class="option-item" onclick="console.log('Option: Toggle Dark/Light')">
+        <div class="option-item" onclick="console.log('Option: Toggle Dark/Light')" data-title="Toggle Dark/Light">
              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
         </div>
-        <div class="option-item" onclick="console.log('Option: Share Link')">
+        <div class="option-item" onclick="console.log('Option: Share Link')" data-title="Share Link">
              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+        </div> -->
+        <div class="option-item" onclick="saveAsImage()" data-title="Save as Image">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         </div>
     </div>
 
@@ -49,6 +52,7 @@
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
 </body>
