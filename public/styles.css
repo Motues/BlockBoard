@@ -1,0 +1,193 @@
+:root {
+    --bg-color: #222222;       
+    --grid-gap-color: #444444; 
+    --cell-black: #070707;     
+    --cell-white: #eeeeee;     
+    --text-color: #ffffff;
+    /* 新增变量用于控制按钮和面板尺寸 */
+    --footer-height: 48px; 
+    --footer-height-inner: 36px;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background-color: var(--bg-color);
+    font-family: "Press Start 2P", 'Segoe UI', sans-serif;
+    color: var(--text-color);
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+body.grabbing {
+    cursor: grabbing;
+}
+
+/* --- 毛玻璃 UI 组件 --- */
+.glass-panel {
+    position: fixed;
+    z-index: 100;
+    padding: 12px 24px;
+    background: rgba(30, 30, 30, 0.65);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    pointer-events: auto;
+    /* 保持基础过渡 */
+    transition: opacity 0.3s, transform 0.3s;
+}
+
+/* 默认居中样式只给顶部和底部（左侧定位的） */
+.header-ui, .footer-ui:not(#settings-button) {
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.header-ui {
+    top: 20px;
+}
+
+.footer-ui {
+    bottom: 20px;
+    font-size: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: #aaa;
+    width: fit-content;
+    max-width: 80vw;
+    white-space: nowrap;
+}
+
+h1 { 
+    margin: 0;
+    font-size: 1rem;
+    letter-spacing: 2px;
+    color: #fff;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
+.footer-ui a {
+    color: #fff;
+    text-decoration: none;
+    border-bottom: 1px dotted #666;
+    width: auto;
+}
+
+/* --- 设置按钮和选项面板样式 --- */
+#settings-button {
+    bottom: 20px;
+    right: 20px;
+    left: auto;
+    transform: none;
+    border-radius: 50%;
+    width: var(--footer-height); 
+    height: var(--footer-height);
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+    pointer-events: auto;
+}
+
+#settings-button:hover {
+    background: rgba(40, 40, 40, 0.65);
+}
+
+#settings-button svg {
+    width: 60%;
+    height: 60%;
+    color: var(--text-color);
+}
+
+#options-panel {
+    bottom: calc(20px + var(--footer-height) + 10px);
+    right: 20px;
+    left: auto;
+    transform: none;
+    width: var(--footer-height);
+    padding: 12px 0;
+    border-radius: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 1;
+    visibility: visible; 
+    /* 关键：确保所有属性都有 0.3s 的过渡，visibility 也必须声明过渡 */
+    transition: opacity 0.3s ease-out, transform 0.3s ease-out, visibility 0.3s; 
+    pointer-events: auto;
+}
+
+#options-panel.hidden {
+    opacity: 0;
+    transform: translateY(10px); 
+    /* 关键：隐藏时设置 visibility: hidden，但由于设置了 transition，它会在 0.3s 后才生效 */
+    visibility: hidden; 
+}
+
+
+/* --- 视口与网格 --- */
+#viewport {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    will-change: transform;
+}
+
+#grid-container {
+    box-shadow: 0 0 50px rgba(0,0,0,0.8);
+}
+
+#grid {
+    display: grid;
+    gap: 1px;
+    background: var(--grid-gap-color); 
+    padding: 1px;
+}
+
+.cell {
+    background-color: var(--cell-black);
+    cursor: pointer;
+    position: relative;
+}
+
+@media (hover: hover) {
+    .cell:hover {
+        opacity: 0.8;
+        z-index: 10;
+        transform: scale(1.1);
+        box-shadow: 0 0 8px rgba(0,0,0,0.8);
+        transition: transform 0.2s;
+    }
+}
+
+.cell.white {
+    background-color: var(--cell-white);
+    transform: rotateY(180deg);
+    transition: transform 0.5s;
+}
+
+.cell.pending::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.1);
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0; }
+    50% { opacity: 1; }
+    100% { opacity: 0; }
+}
