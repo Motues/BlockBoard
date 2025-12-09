@@ -2,6 +2,8 @@
 
 A real-time online block board
 
+![Index](./doc/images/index.png)
+
 ## Deployment
 
 1. Clone the repo
