@@ -1,3 +1,11 @@
+@font-face {
+    font-family: 'Pixelify Sans';
+    src: url('./fonts/PixelifySans-Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 :root {
     --bg-color: #222222;       
     --grid-gap-color: #444444; 
@@ -16,7 +24,7 @@ body {
     height: 100vh;
     overflow: hidden;
     background-color: var(--bg-color);
-    font-family: "Press Start 2P", 'Segoe UI', sans-serif;
+    font-family: "Pixelify Sans", 'Segoe UI', sans-serif;
     color: var(--text-color);
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='10' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white'/%3E%3C/svg%3E") 16 16, auto;
     user-select: none;
@@ -61,7 +69,7 @@ body.grabbing {
 
 .footer-ui {
     bottom: 20px;
-    font-size: 0.6rem;
+    /* font-size: 0.6rem; */
     display: flex;
     flex-direction: column;
     gap: 5px;
@@ -73,7 +81,7 @@ body.grabbing {
 
 h1 { 
     margin: 0;
-    font-size: 1rem;
+    font-size: 1.5rem;
     letter-spacing: 2px;
     color: #fff;
     text-shadow: 0 2px 4px rgba(0,0,0,0.5);
@@ -156,7 +164,7 @@ h1 {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     padding: 6px 10px;
-    font-size: 0.6rem;
+    /* font-size: 0.6rem; */
     white-space: nowrap;
     opacity: 0;
     visibility: hidden;
@@ -284,14 +292,14 @@ h1 {
 }
 
 .hint-text {
-    font-size: 0.7rem;
+    /* font-size: 0.7rem; */
     color: #ffffff;
     white-space: normal;
     line-height: 1.4;
 }
 
 .hint-text-en {
-    font-size: 0.6rem;
+    /* font-size: 0.6rem; */
     color: #ffffff;
     white-space: normal;
     line-height: 1.4;
