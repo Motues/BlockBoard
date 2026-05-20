@@ -11,13 +11,11 @@
   "license": "MIT",
   "packageManager": "pnpm@10.15.1",
   "dependencies": {
-    "koa": "^3.1.1",
-    "koa-static": "^5.0.0",
+    "@hono/node-server": "^2.0.3",
+    "hono": "^4.12.21",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
-    "@types/koa": "^3.0.1",
-    "@types/koa-static": "^4.0.4",
     "@types/node": "^24.10.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
