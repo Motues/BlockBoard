@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.2.0">
+    <link rel="stylesheet" href="styles.css?v=1.3.0">
 </head>
 <body>
 
@@ -14,7 +14,7 @@
 
     <div class="glass-panel footer-ui">
         <div>Online: <span id="onlineCount" style="color: #4cd137;">...</span></div>
-        <div>Made by <a href="https://motues.top" target="_blank">Motues</a></div>
+        <div>Made by <a href="https://www.motues.top" target="_blank">Motues</a></div>
     </div>
     
     <!-- 提示弹窗 -->
@@ -27,6 +27,7 @@
                     <li>Click the block to change the color</li>
                     <li>Scroll / pinch to zoom the board</li>
                     <li>Right click to pick a brush color</li>
+                    <li>Click the rainbow circle for any RGB color</li>
                 </ul>
             </div>
         </div>
@@ -79,10 +80,31 @@
 
     <!-- 画笔颜色圆环：在画布上右键（或在设置面板里点画笔图标）呼出 -->
     <div id="brush-ring">
-        <div class="brush-ring-center" id="brush-ring-center"></div>
+        <!-- 圆心的彩虹圆：和其它色块一样大，点击打开调色盘。
+             中间的小圆是彩虹，外圈是当前自定义颜色（没选自定义颜色时透明） -->
+        <button type="button" id="brush-ring-center" class="brush-ring-center" title="自定义颜色 / Custom color">
+            <span class="brush-ring-center-dot"></span>
+        </button>
+    </div>
+
+    <!-- 调色盘：拖拽 / 滑动选色，也可以直接输入 16 进制色号 -->
+    <div id="color-picker" class="glass-panel hidden">
+        <div class="picker-title">自定义颜色 / Custom color</div>
+        <div class="picker-sv" id="picker-sv">
+            <div class="picker-sv-cursor" id="picker-sv-cursor"></div>
+        </div>
+        <input type="range" id="picker-hue" class="picker-hue" min="0" max="360" step="1" value="0" aria-label="Hue">
+        <div class="picker-row">
+            <span class="picker-preview" id="picker-preview"></span>
+            <input type="text" id="picker-hex" class="picker-hex" spellcheck="false" autocomplete="off" autocapitalize="off" maxlength="7" value="#eeeeee" aria-label="Hex color">
+        </div>
+        <div class="picker-actions">
+            <span class="picker-rgb" id="picker-rgb">238, 238, 238</span>
+            <button type="button" id="picker-done" class="picker-done">完成 / Done</button>
+        </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=1.2.1"></script>
+    <script src="script.js?v=1.3.0"></script>
 </body>
 </html>

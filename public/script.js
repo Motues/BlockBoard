@@ -1,4 +1,10 @@
-const socket = io();
+// 握手里告诉服务端自己认识哪些状态格式（见 src/server.ts 的 init-game）：
+//   rgb24 = 24bit 取值（>= 16 是自定义颜色）+ 3 字节/格 的稠密状态
+//   rle   = RLE 紧凑状态（跳过黑格，通常只有几十字节）
+// 服务端会据此只发一份状态，而不是把几种格式都塞过来
+const STATE_CAPS = ['rgb24', 'rle'];
+
+const socket = io({ auth: { caps: STATE_CAPS } });
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
 
@@ -53,8 +59,9 @@ const COLORS = {
 };
 
 // --- 画笔颜色（右键圆环里选择）---
-// 颜色编号与服务端的 4bit 值一一对应：0 = 黑，1..N = 下面的预设颜色
+// 预设颜色编号与服务端的单元格取值一一对应：0 = 黑，1..N = 下面的预设颜色
 // 预设都是低饱和度（灰调）的颜色，1 号与默认的"白块"一致
+// 圆心的彩虹圆另外支持任意 24bit RGB 自定义颜色
 // name 用「中文 / English」格式，会显示在圆环色块的提示里
 const BRUSH_PRESETS = [
     { color: '#eeeeee', name: '灰白（默认）/ Off White (default)' },
@@ -69,19 +76,148 @@ const BRUSH_PRESETS = [
 const BRUSH_STORAGE_KEY = 'blockboard-brush-color';
 const BLACK_VALUE = 0;
 
+// --- 单元格取值（与 src/state.ts 保持一致）---
+//   0x000000           → 黑色
+//   0x000001..0x00000F → 预设颜色编号（对应 VALUE_COLORS）
+//   >= 0x000010        → 自定义颜色，值本身就是 24bit RGB
+// 预设编号占掉了 0x00..0x0F，自定义颜色落到这一段（#000000..#00000F，肉眼都是纯黑）
+// 会被抬到 0x000010 再存
+const PRESET_MAX = 15;
+const RGB_MIN = PRESET_MAX + 1;
+const RGB_MASK = 0x00ffffff;
+
+function isCustomValue(value) {
+    return value > PRESET_MAX;
+}
+
+// 24bit RGB → 单元格取值
+function customValue(rgb) {
+    const value = rgb & RGB_MASK;
+    return value > PRESET_MAX ? value : RGB_MIN;
+}
+
+// --- 颜色换算：24bit 整数 ↔ #rrggbb ↔ HSV ---
+
+// '#abc' / '#aabbcc' / 'aabbcc' 都能解析，解析不了返回 null
+function parseHexColor(text) {
+    const raw = String(text).trim().replace(/^#/, '');
+
+    if (/^[0-9a-f]{3}$/i.test(raw)) {
+        return parseInt(raw[0] + raw[0] + raw[1] + raw[1] + raw[2] + raw[2], 16);
+    }
+    if (/^[0-9a-f]{6}$/i.test(raw)) {
+        return parseInt(raw, 16);
+    }
+
+    return null;
+}
+
+function rgbToHex(rgb) {
+    return '#' + (rgb & RGB_MASK).toString(16).padStart(6, '0');
+}
+
+function rgbComponents(rgb) {
+    return {
+        r: (rgb >> 16) & 0xff,
+        g: (rgb >> 8) & 0xff,
+        b: rgb & 0xff
+    };
+}
+
+function rgbComponentsToText(rgb) {
+    const { r, g, b } = rgbComponents(rgb);
+    return `${r}, ${g}, ${b}`;
+}
+
+function rgbToHsv(rgb) {
+    const { r, g, b } = rgbComponents(rgb);
+    const rn = r / 255;
+    const gn = g / 255;
+    const bn = b / 255;
+
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const delta = max - min;
+
+    let h = 0;
+    if (delta !== 0) {
+        if (max === rn) h = 60 * (((gn - bn) / delta) % 6);
+        else if (max === gn) h = 60 * ((bn - rn) / delta + 2);
+        else h = 60 * ((rn - gn) / delta + 4);
+    }
+    if (h < 0) h += 360;
+
+    return { h: h, s: max === 0 ? 0 : delta / max, v: max };
+}
+
+function hsvToRgb(h, s, v) {
+    const c = v * s;
+    const hp = (((h % 360) + 360) % 360) / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    const m = v - c;
+
+    let base;
+    if (hp < 1) base = [c, x, 0];
+    else if (hp < 2) base = [x, c, 0];
+    else if (hp < 3) base = [0, c, x];
+    else if (hp < 4) base = [0, x, c];
+    else if (hp < 5) base = [x, 0, c];
+    else base = [c, 0, x];
+
+    const to255 = (n) => Math.round((n + m) * 255);
+    return ((to255(base[0]) << 16) | (to255(base[1]) << 8) | to255(base[2])) >>> 0;
+}
+
+// 感知亮度 0..1：悬停时决定用亮色还是暗色叠加（黑块提亮 / 亮块压暗）
+function colorLuminance(rgb) {
+    const { r, g, b } = rgbComponents(rgb);
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
 // 1 号颜色跟随 CSS 变量 --cell-white，改主题色时不用改两处
 BRUSH_PRESETS[0].color = COLORS.white;
 
 // 颜色值 → 实际颜色（16 项，覆盖 4bit 的全部取值）
 const VALUE_COLORS = new Array(16).fill(COLORS.white);
+// 颜色值 → 24bit RGB（自定义颜色的比较与亮度计算用得上）
+const VALUE_RGB = new Array(16).fill(0xffffff);
+
 VALUE_COLORS[BLACK_VALUE] = COLORS.black;
+VALUE_RGB[BLACK_VALUE] = 0x000000;
+
 BRUSH_PRESETS.forEach((preset, i) => {
     VALUE_COLORS[i + 1] = preset.color;
+
+    const rgb = parseHexColor(preset.color);
+    VALUE_RGB[i + 1] = rgb === null ? 0xffffff : rgb;
 });
 
-// 当前画笔（1..BRUSH_PRESETS.length）
+// 颜色值 → CSS 颜色；自定义颜色当场换算成 #rrggbb
+function valueToColor(value) {
+    if (isCustomValue(value)) return rgbToHex(value);
+    return VALUE_COLORS[value] || COLORS.white;
+}
+
+// 颜色值 → 24bit RGB
+function valueRgb(value) {
+    if (isCustomValue(value)) return value & RGB_MASK;
+    return typeof VALUE_RGB[value] === 'number' ? VALUE_RGB[value] : 0xffffff;
+}
+
+function valueIsDark(value) {
+    return colorLuminance(valueRgb(value)) < 0.5;
+}
+
+// --- 当前画笔 ---
+// 预设颜色：brushIndex 是 1..BRUSH_PRESETS.length
+// 自定义颜色：brushIndex 为 0，真正的色值在 brushRgb 里
 let brushIndex = 1;
-let brushColor = VALUE_COLORS[brushIndex];
+let brushRgb = VALUE_RGB[1];
+let brushColor = VALUE_COLORS[1];
+
+function isCustomBrush() {
+    return brushIndex === 0;
+}
 
 // --- 棋盘数据 ---
 // gridState[i] 是 0..15 的颜色值：0 = 黑，1..N = BRUSH_PRESETS 里的颜色
@@ -221,10 +357,20 @@ function buildBrushRing() {
         ring.appendChild(slot);
         brushSwatches.push(swatch);
     });
+
+    // 圆心的彩虹圆：点击打开调色盘
+    const center = document.getElementById('brush-ring-center');
+    center.addEventListener('click', () => {
+        closeBrushRing();
+        openColorPicker();
+    });
 }
 
 function openBrushRing(clientX, clientY) {
     const ring = document.getElementById('brush-ring');
+
+    // 圆环和调色盘不会同时显示
+    closeColorPicker();
 
     // 贴着屏幕边缘时把圆环收回来，避免被裁掉
     const margin = ring.offsetWidth / 2 + 8;
@@ -268,22 +414,36 @@ function onContextMenu(e) {
     openBrushRing(e.clientX, e.clientY);
 }
 
+// 选择预设颜色
 function setBrushIndex(index) {
     brushIndex = clamp(Math.round(index), 1, BRUSH_PRESETS.length);
+    brushRgb = valueRgb(brushIndex);
     brushColor = VALUE_COLORS[brushIndex];
 
+    saveBrush();
+    applyBrush();
+}
+
+// 选择自定义颜色（24bit RGB）
+function setBrushRgb(rgb) {
+    brushIndex = 0;
+    brushRgb = rgb & RGB_MASK;
+    brushColor = rgbToHex(brushRgb);
+
+    saveBrush();
+    applyBrush();
+}
+
+function saveBrush() {
     try {
-        localStorage.setItem(BRUSH_STORAGE_KEY, String(brushIndex));
+        // 预设存编号，自定义颜色存 #rrggbb
+        localStorage.setItem(BRUSH_STORAGE_KEY, isCustomBrush() ? brushColor : String(brushIndex));
     } catch (e) {
         // 隐私模式等场景下写不了，忽略
     }
-
-    updateBrushCursor();
-    highlightActiveSwatch();
-    requestRender();
 }
 
-function loadBrushIndex() {
+function loadBrush() {
     let saved = null;
     try {
         saved = localStorage.getItem(BRUSH_STORAGE_KEY);
@@ -292,27 +452,55 @@ function loadBrushIndex() {
     }
     if (!saved) return;
 
-    const asIndex = Number(saved);
-    if (Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= BRUSH_PRESETS.length) {
-        brushIndex = asIndex;
-    } else {
-        // 兼容上一版存下来的十六进制颜色
-        const found = BRUSH_PRESETS.findIndex(
-            (preset) => preset.color.toLowerCase() === String(saved).toLowerCase()
-        );
-        if (found >= 0) brushIndex = found + 1;
+    const text = String(saved).trim();
+
+    // 预设颜色存的是编号
+    if (/^\d+$/.test(text)) {
+        const asIndex = Number(text);
+        if (Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= BRUSH_PRESETS.length) {
+            brushIndex = asIndex;
+            brushRgb = valueRgb(brushIndex);
+            brushColor = VALUE_COLORS[brushIndex];
+        }
+        return;
     }
 
-    brushColor = VALUE_COLORS[brushIndex];
+    // 存的是颜色（上一版存过预设的十六进制色值）：和预设色一样就当预设用，否则算自定义颜色
+    const rgb = parseHexColor(text);
+    if (rgb === null) return;
+
+    const found = BRUSH_PRESETS.findIndex((preset) => parseHexColor(preset.color) === rgb);
+    if (found >= 0) {
+        brushIndex = found + 1;
+        brushRgb = valueRgb(brushIndex);
+        brushColor = VALUE_COLORS[brushIndex];
+    } else {
+        brushIndex = 0;
+        brushRgb = rgb;
+        brushColor = rgbToHex(rgb);
+    }
+}
+
+// 画笔变化后统一刷新界面：光标、圆环高亮、圆心预览、重绘。
+// 注意：这里不回写调色盘 —— 调色盘以自身的 HSV 状态为准，
+// 拖到灰色时色相才不会被 RGB 反算冲掉
+function applyBrush() {
+    updateBrushCursor();
+    highlightActiveSwatch();
+    requestRender();
 }
 
 function highlightActiveSwatch() {
     for (const swatch of brushSwatches) {
-        swatch.classList.toggle('active', Number(swatch.dataset.index) === brushIndex);
+        const active = !isCustomBrush() && Number(swatch.dataset.index) === brushIndex;
+        swatch.classList.toggle('active', active);
     }
 
-    // 圆心的小圆点也显示当前画笔颜色
-    document.getElementById('brush-ring-center').style.background = brushColor;
+    // 圆心：中间的小圆固定是彩虹，外圈显示当前自定义颜色，没选时透明
+    const center = document.getElementById('brush-ring-center');
+
+    center.classList.toggle('active', isCustomBrush());
+    center.style.background = isCustomBrush() ? brushColor : 'transparent';
 }
 
 // 鼠标指针上的小圆跟着画笔颜色变
@@ -329,8 +517,16 @@ function updateBrushCursor() {
 
 // 圆环打开时，点空白处只收起圆环，不顺手切换方块
 document.addEventListener('click', (e) => {
+    const inRing = e.target.closest && e.target.closest('#brush-ring');
+    const inPicker = e.target.closest && e.target.closest('#color-picker');
+
+    // 调色盘：点外面就收起来（选中的颜色会保留）
+    if (pickerOpen && !inPicker && !inRing) {
+        closeColorPicker();
+    }
+
     if (!brushRingOpen) return;
-    if (e.target.closest && e.target.closest('#brush-ring')) return;
+    if (inRing) return;
 
     closeBrushRing();
 
@@ -341,25 +537,229 @@ document.addEventListener('click', (e) => {
 }, true);
 
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeBrushRing();
+    if (e.key !== 'Escape') return;
+
+    closeColorPicker();
+    closeBrushRing();
+});
+
+// --- 调色盘（圆心的彩虹圆点开）---
+// 拖动饱和度 / 明度面板或色相滑条选色，也可以直接输入 16 进制色号。
+// 选色是即时生效的：拖到哪里，画笔就是什么颜色
+let pickerOpen = false;
+let pickerHsv = { h: 0, s: 0, v: 1 };
+let pickerRgb = 0xeeeeee;
+let pickerDrag = false;
+
+function openColorPicker() {
+    if (!serverSupportsRgb) return; // 老服务端不认识自定义颜色
+
+    const picker = document.getElementById('color-picker');
+    const ring = document.getElementById('brush-ring');
+
+    // 从当前画笔出发，画笔是预设色时也把它作为调色盘的起点
+    syncPickerFromBrush();
+
+    // 先量尺寸再定位（隐藏时用的是 visibility: hidden，尺寸依然可测）
+    const ringRect = ring.getBoundingClientRect();
+    const ringHalf = ring.offsetWidth / 2;
+    const margin = 12;
+    const gap = 14;
+    const w = picker.offsetWidth;
+    const h = picker.offsetHeight;
+
+    const centerX = ringRect.left + ringRect.width / 2;
+    const centerY = ringRect.top + ringRect.height / 2;
+
+    // 优先放在圆环右边，放不下就放左边，最后再夹进屏幕
+    let x = centerX + ringHalf + gap;
+    if (x + w > viewport.w - margin) {
+        x = centerX - ringHalf - gap - w;
+    }
+    x = clamp(x, margin, Math.max(margin, viewport.w - w - margin));
+
+    const y = clamp(centerY - h / 2, margin, Math.max(margin, viewport.h - h - margin));
+
+    picker.style.left = Math.round(x) + 'px';
+    picker.style.top = Math.round(y) + 'px';
+    picker.classList.remove('hidden');
+
+    pickerOpen = true;
+
+    // 允许鼠标滚轮缩放棋盘时不要误改色相：焦点留给色号输入框之外的地方
+    document.getElementById('picker-hex').blur();
+}
+
+function closeColorPicker() {
+    if (!pickerOpen) return;
+
+    pickerOpen = false;
+    pickerDrag = false;
+    document.getElementById('color-picker').classList.add('hidden');
+}
+
+// 调色盘的当前颜色 → 画笔（即时生效）
+function applyPickerColor() {
+    setBrushRgb(pickerRgb);
+}
+
+// 把调色盘的状态画到界面上：SV 面板底色、游标、色相滑条、预览、色号
+function renderPicker(options) {
+    const opts = options || {};
+    const hue = pickerHsv.h;
+    const sv = document.getElementById('picker-sv');
+    const cursor = document.getElementById('picker-sv-cursor');
+    const hueSlider = document.getElementById('picker-hue');
+    const hexInput = document.getElementById('picker-hex');
+    const preview = document.getElementById('picker-preview');
+
+    // 面板底色：白 → 纯色相，再叠一层透明 → 黑
+    sv.style.background =
+        `linear-gradient(to top, #000, rgba(0, 0, 0, 0)),` +
+        `linear-gradient(to right, #fff, hsl(${hue.toFixed(1)}, 100%, 50%))`;
+
+    cursor.style.left = (pickerHsv.s * 100).toFixed(2) + '%';
+    cursor.style.top = ((1 - pickerHsv.v) * 100).toFixed(2) + '%';
+
+    hueSlider.value = String(Math.round(hue));
+
+    preview.style.background = rgbToHex(pickerRgb);
+    document.getElementById('picker-rgb').textContent = rgbComponentsToText(pickerRgb);
+
+    // 用户正在输入时不要回写输入框，免得打字打到一半被覆盖
+    if (!opts.fromHex) {
+        hexInput.value = rgbToHex(pickerRgb);
+        hexInput.classList.remove('invalid');
+    }
+}
+
+// 拖动 / 滑动只改 HSV 里的一个分量：
+// 这样拖到灰色（饱和度 0）时色相不会被丢掉，滑条不会突然跳回红色
+function setPickerHsv(h, s, v) {
+    pickerHsv = { h: ((h % 360) + 360) % 360, s: clamp(s, 0, 1), v: clamp(v, 0, 1) };
+    pickerRgb = hsvToRgb(pickerHsv.h, pickerHsv.s, pickerHsv.v);
+
+    renderPicker();
+    applyPickerColor();
+}
+
+// 已经知道确切颜色时（色号输入、打开调色盘）反过来算出 HSV
+function setPickerRgb(rgb, options) {
+    pickerRgb = rgb & RGB_MASK;
+    pickerHsv = rgbToHsv(pickerRgb);
+
+    renderPicker(options);
+}
+
+// 画笔 → 调色盘（打开调色盘时同步一次）
+function syncPickerFromBrush() {
+    // 预设色直接换算成 24bit 作为起点
+    setPickerRgb(isCustomBrush() ? brushRgb : valueRgb(brushIndex));
+}
+
+// 拖动 / 点击 SV 面板：横向是饱和度，纵向是明度
+function pickerPointToSv(clientX, clientY) {
+    const sv = document.getElementById('picker-sv');
+    const rect = sv.getBoundingClientRect();
+
+    const s = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    const v = 1 - clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+
+    return { s, v };
+}
+
+function onPickerSvMove(clientX, clientY) {
+    const { s, v } = pickerPointToSv(clientX, clientY);
+
+    setPickerHsv(pickerHsv.h, s, v);
+}
+
+document.getElementById('picker-sv').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+
+    pickerDrag = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    onPickerSvMove(e.clientX, e.clientY);
+});
+
+document.getElementById('picker-sv').addEventListener('pointermove', (e) => {
+    if (!pickerDrag) return;
+    onPickerSvMove(e.clientX, e.clientY);
+});
+
+document.getElementById('picker-sv').addEventListener('pointerup', (e) => {
+    pickerDrag = false;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+});
+
+document.getElementById('picker-sv').addEventListener('pointercancel', () => {
+    pickerDrag = false;
+});
+
+// 色相滑条
+document.getElementById('picker-hue').addEventListener('input', (e) => {
+    setPickerHsv(Number(e.target.value), pickerHsv.s, pickerHsv.v);
+});
+
+// 色号输入框：#rgb / #rrggbb 都认，输入过程中不合法就先标红
+document.getElementById('picker-hex').addEventListener('input', (e) => {
+    const rgb = parseHexColor(e.target.value);
+
+    if (rgb === null) {
+        e.target.classList.add('invalid');
+        return;
+    }
+
+    e.target.classList.remove('invalid');
+    setPickerRgb(rgb, { fromHex: true });
+    applyPickerColor();
+});
+
+document.getElementById('picker-hex').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.target.blur();
+        closeColorPicker();
+    }
+});
+
+// 完成：关掉调色盘（颜色在选的时候就已经生效）
+document.getElementById('picker-done').addEventListener('click', () => {
+    closeColorPicker();
 });
 
 // --- Socket ---
-// 新服务端会在 init-game 里带上 maxColorIndex，据此判断能否用颜色协议
+// 新服务端会在 init-game 里带上 maxColorIndex，据此判断能否用颜色协议；
+// 带上 rgbSupport / state32 就说明它支持自定义 24bit 颜色
 let serverSupportsColor = false;
+let serverSupportsRgb = false;
 
 socket.on('init-game', (data) => {
-    const { config, state, maxColorIndex } = data;
+    const { config, maxColorIndex, rgbSupport, stateRgb, state32 } = data;
     serverSupportsColor = typeof maxColorIndex === 'number';
-    initBoard(config, state);
+    // 状态可能是 stateRgb（新服务端）或 state32（上一版服务端），都说明它支持自定义颜色
+    serverSupportsRgb = rgbSupport === true ||
+        typeof stateRgb === 'string' ||
+        typeof state32 === 'string';
+
+    // 老服务端存不了自定义颜色：禁用圆心，并把自定义画笔退回预设色
+    document.getElementById('brush-ring-center').classList.toggle('unsupported', !serverSupportsRgb);
+    if (!serverSupportsRgb && isCustomBrush()) {
+        setBrushIndex(1);
+    }
+
+    initBoard(config, data);
 });
 
 // 收到服务器广播：方块的颜色值确定
-socket.on('update-square', ({ index, value, isBlack }) => {
-    // value 是新服务端的 4bit 颜色值；isBlack 用于兼容旧服务端
-    const target = typeof value === 'number'
-        ? value
-        : (isBlack ? BLACK_VALUE : 1);
+socket.on('update-square', ({ index, value, isBlack, rgb }) => {
+    // rgb 是自定义 24bit 颜色；value / isBlack 用于新老服务端的兼容
+    const target = typeof rgb === 'number'
+        ? customValue(rgb)
+        : typeof value === 'number'
+            ? value
+            : (isBlack ? BLACK_VALUE : 1);
 
     const now = performance.now();
 
@@ -386,7 +786,7 @@ socket.on('online-users', (count) => {
 });
 
 // --- 初始化棋盘 ---
-function initBoard(config, state) {
+function initBoard(config, payload) {
     board.cols = config.cols;
     board.rows = config.rows;
     board.cellSize = config.cellSize;
@@ -395,7 +795,7 @@ function initBoard(config, state) {
     board.width = board.cols * board.cellSize + (board.cols - 1) * board.gap + board.padding * 2;
     board.height = board.rows * board.cellSize + (board.rows - 1) * board.gap + board.padding * 2;
 
-    gridState = decodeState(state, board.cols * board.rows);
+    gridState = decodeBoardState(payload, board.cols * board.rows);
 
     for (const timer of pendingTimers.values()) {
         clearTimeout(timer);
@@ -409,11 +809,31 @@ function initBoard(config, state) {
     resetView();
 }
 
-// 解码服务端状态。
-//   新服务端：4bit/格 的 Base64（每字节两格，低 4 位在前）
-//   旧服务端：布尔数组（true = 黑）
+// 服务端下发的棋盘状态可能是三种形态：
+//   1. stateRgb + stateEncoding（当前）：24bit，'rle' 是紧凑格式、'dense' 是 3 字节/格
+//   2. state32（上一版服务端）：24bit，4 字节/格
+//   3. state：4bit，旧服务端 / 没刷新过的旧页面
+function decodeBoardState(payload, total) {
+    if (typeof payload.stateRgb === 'string') {
+        return payload.stateEncoding === 'rle'
+            ? decodeRleState(payload.stateRgb, total)
+            : decodeStateRgb(payload.stateRgb, total, 3);
+    }
+
+    if (typeof payload.state32 === 'string') {
+        // 上一版服务端：只有明确写了 stateFormat: 'rgb24' 才是 3 字节/格，
+        // 更早的那版不发 stateFormat，是 4 字节/格
+        return decodeStateRgb(payload.state32, total, payload.stateFormat === 'rgb24' ? 3 : 4);
+    }
+
+    return decodeState(payload.state, total);
+}
+
+// 解码服务端状态（旧协议）。
+//   4bit/格 的 Base64（每字节两格，低 4 位在前）
+//   布尔数组（true = 黑）
 function decodeState(state, total) {
-    const out = new Uint8Array(total);
+    const out = new Uint32Array(total);
 
     if (typeof state === 'string') {
         const binary = atob(state);
@@ -431,6 +851,83 @@ function decodeState(state, total) {
         for (let i = 0; i < total; i++) {
             out[i] = state[i] === false ? 1 : BLACK_VALUE;
         }
+    }
+
+    return out;
+}
+
+// 解码服务端状态（24bit/格）。
+//   bytesPerCell = 3：当前格式，每格 3 字节小端
+//   bytesPerCell = 4：上一版格式，每格 4 字节，高 8 位是"自定义颜色"标记
+function decodeStateRgb(encoded, total, bytesPerCell) {
+    const out = new Uint32Array(total);
+    const binary = atob(encoded);
+    const step = bytesPerCell === 4 ? 4 : 3;
+
+    for (let i = 0; i < total; i++) {
+        const offset = i * step;
+        if (offset + step > binary.length) break;
+
+        if (step === 4) {
+            // 上一版：高 8 位是标记位，低 24 位才是颜色
+            const raw = (
+                binary.charCodeAt(offset) |
+                (binary.charCodeAt(offset + 1) << 8) |
+                (binary.charCodeAt(offset + 2) << 16) |
+                (binary.charCodeAt(offset + 3) << 24)
+            ) >>> 0;
+
+            out[i] = (raw & 0x01000000) ? customValue(raw & RGB_MASK) : (raw & PRESET_MAX);
+            continue;
+        }
+
+        out[i] = (
+            binary.charCodeAt(offset) |
+            (binary.charCodeAt(offset + 1) << 8) |
+            (binary.charCodeAt(offset + 2) << 16)
+        ) >>> 0;
+    }
+
+    return out;
+}
+
+// 读取 varint（每字节 7 位，最高位是"还有后续字节"标志）
+function readVarint(binary, cursor) {
+    let value = 0;
+    let scale = 1;
+
+    while (cursor.pos < binary.length) {
+        const byte = binary.charCodeAt(cursor.pos++);
+        value += (byte & 0x7f) * scale;
+
+        if ((byte & 0x80) === 0) break;
+        scale *= 128;
+    }
+
+    return value;
+}
+
+// 解码 RLE 紧凑状态（与 src/state.ts 的 encodeRle 对应）：
+// 每个色块三个 varint = [跳过多少个黑格, 连续同色多少格, 颜色值]，
+// 没被覆盖的格子保持黑色
+function decodeRleState(encoded, total) {
+    const out = new Uint32Array(total);
+    const binary = atob(encoded);
+    const cursor = { pos: 0 };
+    let index = 0;
+
+    while (cursor.pos < binary.length) {
+        index += readVarint(binary, cursor);
+
+        const run = readVarint(binary, cursor);
+        const value = readVarint(binary, cursor);
+
+        if (run <= 0 || index >= total) break;
+
+        const end = Math.min(total, index + run);
+        for (let i = index; i < end; i++) out[i] = value;
+
+        index = end;
     }
 
     return out;
@@ -649,7 +1146,7 @@ function paintBoard(g, cam) {
             const w = xs[c - c0 + 1] - x - lineW;
             if (w <= 0) continue;
 
-            const color = VALUE_COLORS[gridState[index]] || COLORS.white;
+            const color = valueToColor(gridState[index]);
             if (color !== lastColor) {
                 g.fillStyle = color;
                 lastColor = color;
@@ -731,8 +1228,8 @@ function drawSwitches(now, scale, origin, lineW) {
             : clamp((1 - Math.max(0, anim.end - now) / SWITCH_SETTLE), 0, 1);
 
         // 风车两半：一边是原色、一边是新色，转完落到新色
-        const fromColor = VALUE_COLORS[anim.from] || COLORS.white;
-        const toColor = VALUE_COLORS[anim.to] || COLORS.white;
+        const fromColor = valueToColor(anim.from);
+        const toColor = valueToColor(anim.to);
 
         ctx.save();
         ctx.beginPath();
@@ -802,7 +1299,8 @@ function drawHover(now, scale, origin, lineW) {
 // 单个悬停方块：放大 + 阴影 + 轻微变色 + 一条沿左上→右下滚动的波浪
 function drawHoverCell(now, index, x, y, w, h, value) {
     const cellValue = gridState[index];
-    const isBlack = cellValue === BLACK_VALUE;
+    // 深色块提亮、浅色块压暗：自定义颜色按亮度判断
+    const isDark = valueIsDark(cellValue);
 
     const gw = Math.max(1, Math.round(w * (1 + HOVER_SCALE * value)));
     const gh = Math.max(1, Math.round(h * (1 + HOVER_SCALE * value)));
@@ -815,19 +1313,19 @@ function drawHoverCell(now, index, x, y, w, h, value) {
     // 1) 底色 + 阴影：让方块浮起来
     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = Math.max(1, Math.round(8 * viewport.dpr * value));
-    ctx.fillStyle = VALUE_COLORS[cellValue] || COLORS.white;
+    ctx.fillStyle = valueToColor(cellValue);
     ctx.fillRect(gx, gy, gw, gh);
 
-    // 2) 轻微变色：黑块提亮一点、白块压暗一点，和周围一模一样的像素区分开
+    // 2) 轻微变色：深色块提亮一点、浅色块压暗一点，和周围一模一样的像素区分开
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
-    ctx.fillStyle = isBlack
+    ctx.fillStyle = isDark
         ? `rgba(255, 255, 255, ${HOVER_TINT})`
         : `rgba(0, 0, 0, ${HOVER_TINT})`;
     ctx.fillRect(gx, gy, gw, gh);
 
     // 3) 波浪：沿左上→右下方向的余弦波，相位随时间推进，波峰不断向右下滚动
-    //    黑块用白色波峰、白块用黑色波谷，保证两种底色下都看得见
+    //    深色块用白色波峰、浅色块用黑色波谷，保证两种底色下都看得见
     const phase = (now % HOVER_WAVE_PERIOD) / HOVER_WAVE_PERIOD;
     const gradient = ctx.createLinearGradient(gx, gy, gx + gw, gy + gh);
     const steps = 12;
@@ -835,8 +1333,8 @@ function drawHoverCell(now, index, x, y, w, h, value) {
     for (let i = 0; i <= steps; i++) {
         const t = i / steps;
         const wave = Math.sin(2 * Math.PI * (t - phase));
-        const amplitude = Math.max(0, isBlack ? wave : -wave) * HOVER_WAVE_AMPLITUDE;
-        const rgb = isBlack ? '255, 255, 255' : '0, 0, 0';
+        const amplitude = Math.max(0, isDark ? wave : -wave) * HOVER_WAVE_AMPLITUDE;
+        const rgb = isDark ? '255, 255, 255' : '0, 0, 0';
         gradient.addColorStop(t, `rgba(${rgb}, ${amplitude.toFixed(3)})`);
     }
 
@@ -896,11 +1394,24 @@ function onCanvasClick(e) {
     const index = hitTest(e.clientX, e.clientY);
     if (index < 0 || pendingRequests.has(index)) return;
 
+    // 老服务端存不了自定义颜色，点了也不会生效
+    if (isCustomBrush() && !serverSupportsRgb) return;
+
     const now = performance.now();
     const current = gridState[index];
 
     // 和画笔同色 → 擦成黑色；否则涂成画笔颜色（服务端用同样的规则）
-    const target = current === brushIndex ? BLACK_VALUE : brushIndex;
+    let target;
+    let payload;
+    if (isCustomBrush()) {
+        // 服务端不认识客户端的预设调色板，所以自定义颜色只和"完全相同的自定义颜色"比较
+        const brushValue = customValue(brushRgb);
+        target = current === brushValue ? BLACK_VALUE : brushValue;
+        payload = { index: index, rgb: brushRgb };
+    } else {
+        target = current === brushIndex ? BLACK_VALUE : brushIndex;
+        payload = { index: index, brush: brushIndex };
+    }
 
     // 立刻开始风车动画，不等服务器；颜色先按本地预测，回包后再纠正
     startSwitch(index, current, target, now, now + SWITCH_DURATION);
@@ -916,7 +1427,7 @@ function onCanvasClick(e) {
     requestRender();
 
     socket.emit(serverSupportsColor ? 'paint-square' : 'toggle-square',
-        serverSupportsColor ? { index, brush: brushIndex } : index);
+        serverSupportsColor ? payload : index);
 }
 
 // 启动一次切换动画（风车）
@@ -946,7 +1457,8 @@ function clearPending(index) {
 
 // --- 拖拽平移 ---
 function onPointerDown(e) {
-    if (e.target.closest('#settings-button') || e.target.closest('#options-panel') || e.target.closest('#brush-ring')) {
+    if (e.target.closest('#settings-button') || e.target.closest('#options-panel') ||
+        e.target.closest('#brush-ring') || e.target.closest('#color-picker')) {
         viewState.panning = false;
         return;
     }
@@ -1229,7 +1741,7 @@ function saveAsImage() {
 }
 
 // --- 启动 ---
-loadBrushIndex();
+loadBrush();
 buildBrushRing();
 highlightActiveSwatch();
 updateBrushCursor();

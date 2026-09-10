@@ -266,16 +266,216 @@ h1 {
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.28), 0 0 14px rgba(255, 255, 255, 0.35);
 }
 
-/* 圆心：当前画笔颜色的小圆点 */
+/* 圆心：和其它色块一样大，点击打开调色盘。
+   中间的小圆是彩虹（由 .brush-ring-center-dot 画），
+   外圈直接是按钮的背景色：JS 在选中自定义颜色时填成当前颜色，没选时保持透明 */
 .brush-ring-center {
     position: absolute;
-    left: calc(50% - 7px);
-    top: calc(50% - 7px);
+    left: 50%;
+    top: 50%;
+    width: 34px;
+    height: 34px;
+    margin: -17px 0 0 -17px;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.16);
+    background: transparent;
+    /* 颜色不要渗到半透明的边框下面，外圈看起来才干净 */
+    background-clip: padding-box;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: transform 0.15s ease-out, border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.brush-ring-center:hover {
+    transform: scale(1.18);
+}
+
+.brush-ring-center.active {
+    border-color: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.28), 0 0 14px rgba(255, 255, 255, 0.35);
+}
+
+/* 老服务端不支持自定义颜色时，圆心禁用 */
+.brush-ring-center.unsupported {
+    cursor: not-allowed;
+    filter: grayscale(0.6);
+    opacity: 0.45;
+}
+
+/* 中间的小圆：24bit RGB 的入口，用一圈彩虹表示"任意颜色" */
+.brush-ring-center-dot {
+    position: absolute;
+    inset: 6px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+        #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+    pointer-events: none;
+}
+
+/* --- 调色盘（点击圆心的彩虹圆打开）--- */
+#color-picker {
+    z-index: 300;
+    width: 236px;
+    padding: 14px;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    text-align: left;
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.18s ease-out, transform 0.18s ease-out, visibility 0.18s;
+}
+
+#color-picker.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(8px) scale(0.97);
+}
+
+.picker-title {
+    font-size: 0.85rem;
+    color: #ddd;
+    letter-spacing: 0.5px;
+}
+
+/* 饱和度 / 明度面板：底色由 JS 按当前色相设置 */
+.picker-sv {
+    position: relative;
+    width: 100%;
+    height: 148px;
+    border-radius: 10px;
+    cursor: crosshair;
+    touch-action: none;
+    background:
+        linear-gradient(to top, #000, rgba(0, 0, 0, 0)),
+        linear-gradient(to right, #fff, #ff0000);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.picker-sv-cursor {
+    position: absolute;
     width: 14px;
     height: 14px;
+    margin: -7px 0 0 -7px;
     border-radius: 50%;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 1px 4px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+}
+
+/* 色相滑条 */
+.picker-hue {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 16px;
+    border-radius: 8px;
+    background: linear-gradient(to right,
+        #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    outline: none;
+    cursor: pointer;
+    touch-action: auto;
+}
+
+.picker-hue::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid rgba(0, 0, 0, 0.35);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+}
+
+.picker-hue::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid rgba(0, 0, 0, 0.35);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+}
+
+.picker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.picker-preview {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: #eeeeee;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.picker-hex {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: inherit;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    padding: 6px 8px;
+    outline: none;
+    transition: border-color 0.15s, color 0.15s;
+    /* 输入框里要能正常选中文字 */
+    user-select: text;
+    -webkit-user-select: text;
+    touch-action: auto;
+}
+
+.picker-hex:focus {
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
+.picker-hex.invalid {
+    border-color: #e05c5c;
+    color: #e05c5c;
+}
+
+.picker-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.picker-rgb {
+    font-size: 0.75rem;
+    color: #999;
+    letter-spacing: 0.5px;
+}
+
+.picker-done {
+    font-family: inherit;
+    font-size: 0.9rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.15s;
+}
+
+.picker-done:hover {
+    background: rgba(255, 255, 255, 0.24);
+}
+
+.picker-done:active {
+    transform: scale(0.96);
 }
 
 /* 提示弹窗样式 */

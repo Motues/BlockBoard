@@ -6,24 +6,32 @@ import { Server, Socket } from 'socket.io';
 import path from 'path';
 import fs from 'fs';
 import gameConfig from '../game-config.json';
+import {
+    BLACK,
+    CELL_BYTES,
+    PRESET_MAX,
+    RGB_MASK,
+    customValue,
+    decodeState,
+    encodeLegacyState,
+    encodeRle,
+    encodeState,
+    hasCustomColors,
+    isCustomValue,
+    toLegacyIndex
+} from './state';
 
 const app = new Hono();
 const PORT = gameConfig.port;
 
 const TOTAL_SQUARES = gameConfig.rows * gameConfig.cols;
 
-// 每格 4 bit：
-//   0     = 黑色
-//   1..15 = 颜色编号（具体调色板在客户端 public/script.js 的 BRUSH_PRESETS，目前用到 1..8）
-const CELL_BITS = 4;
-const CELLS_PER_BYTE = 8 / CELL_BITS;
-const CELL_MASK = (1 << CELL_BITS) - 1;
-const MAX_COLOR_INDEX = CELL_MASK;
-const BLACK = 0;
-const STATE_BYTES = Math.ceil(TOTAL_SQUARES / CELLS_PER_BYTE);
-
-// 棋盘状态：Uint8Array，每格一个 0..15 的颜色值，默认全黑
-const gridState = new Uint8Array(TOTAL_SQUARES);
+// 棋盘状态：Uint32Array，每格一个 24bit 颜色值（只用低 24 位），默认全黑。
+//   0x000000           = 黑色
+//   0x000001..0x00000F = 预设颜色编号（调色板在客户端 public/script.js 的 BRUSH_PRESETS，目前用到 1..8）
+//   >= 0x000010        = 自定义颜色，值本身就是 24bit RGB
+// 取值约定与编解码都在 src/state.ts
+const gridState = new Uint32Array(TOTAL_SQUARES);
 let onlineUsers = 0;
 
 // Data storage path
@@ -35,71 +43,50 @@ if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// 打包成紧凑的 Base64：每字节装 2 格，低 4 位放前一个格子
-function encodeState(state: Uint8Array): string {
-    const buffer = Buffer.alloc(STATE_BYTES);
-
-    for (let i = 0; i < state.length; i++) {
-        const byteIndex = Math.floor(i / CELLS_PER_BYTE);
-        const shift = (i % CELLS_PER_BYTE) * CELL_BITS;
-        buffer[byteIndex] |= (state[i] & CELL_MASK) << shift;
-    }
-
-    return buffer.toString('base64');
-}
-
-// 解码 Base64（4bit/格）。旧存档是 1bit/格，会在这里自动迁移
-function decodeState(encoded: string): Uint8Array {
-    const buffer = Buffer.from(encoded, 'base64');
-    const state = new Uint8Array(TOTAL_SQUARES);
-
-    // 旧的 1bit/格 格式（1 = 黑，0 = 白）：字节数不同，可以据此识别
-    if (buffer.length === Math.ceil(TOTAL_SQUARES / 8)) {
-        for (let i = 0; i < TOTAL_SQUARES; i++) {
-            const byteIndex = Math.floor(i / 8);
-            const bitIndex = i % 8;
-            const wasBlack = ((buffer[byteIndex] >> bitIndex) & 1) === 1;
-            state[i] = wasBlack ? BLACK : 1;
-        }
-        console.log('Detected legacy 1-bit save file, migrated to 4-bit color state');
-        return state;
-    }
-
-    for (let i = 0; i < TOTAL_SQUARES; i++) {
-        const byteIndex = Math.floor(i / CELLS_PER_BYTE);
-        if (byteIndex >= buffer.length) break;
-
-        const shift = (i % CELLS_PER_BYTE) * CELL_BITS;
-        state[i] = (buffer[byteIndex] >> shift) & CELL_MASK;
-    }
-
-    return state;
-}
-
-// Load saved state from disk
-function loadState(): Uint8Array {
+// Load saved state from disk（旧格式的存档会在这里自动迁移）
+function loadState(): Uint32Array {
     try {
         if (fs.existsSync(DATA_FILE)) {
             const encoded = fs.readFileSync(DATA_FILE, 'utf-8').trim();
             if (encoded.length > 0) {
-                console.log('Loaded saved board state from disk');
-                return decodeState(encoded);
+                const buffer = Buffer.from(encoded, 'base64');
+                const { state, format } = decodeState(buffer, TOTAL_SQUARES);
+
+                if (format === 'rgb24') {
+                    console.log('Loaded saved board state from disk (24bit/cell, 3 bytes)');
+                } else if (format === 'rgb32') {
+                    console.log('Detected 32bit/cell save file, migrated to the 24bit/cell layout');
+                } else if (format === 'preset4') {
+                    console.log('Detected legacy 4-bit save file, migrated to 24bit color state');
+                } else if (format === 'legacy1') {
+                    console.log('Detected legacy 1-bit save file, migrated to 24bit color state');
+                } else {
+                    console.warn('Save file size does not match the board size, loaded as 4-bit best effort');
+                }
+
+                return state;
             }
         }
     } catch (error) {
         console.error('Failed to load saved state:', error);
     }
     console.log('Using default board state');
-    return new Uint8Array(TOTAL_SQUARES);
+    return new Uint32Array(TOTAL_SQUARES);
 }
 
-// Save state to disk
+// Save state to disk。
+// 只有棋盘上真的出现自定义颜色时才写 24bit/格 的新格式（每格 3 字节），
+// 否则仍然写 4bit/格 的旧格式：文件小 6 倍，而且旧版本的程序也能读
 function saveState(): void {
     try {
-        const encoded = encodeState(gridState);
+        const customColors = hasCustomColors(gridState);
+        const encoded = customColors ? encodeState(gridState) : encodeLegacyState(gridState);
+
         fs.writeFileSync(DATA_FILE, encoded, 'utf-8');
+
         const fileSize = Buffer.byteLength(encoded, 'utf-8');
-        console.log(`Board state saved (${fileSize} bytes, ${CELL_BITS}bit/cell) at ${new Date().toLocaleString()}`);
+        const layout = customColors ? `${CELL_BYTES}byte/cell` : '4bit/cell';
+        console.log(`Board state saved (${fileSize} bytes, ${layout}) at ${new Date().toLocaleString()}`);
     } catch (error) {
         console.error('Failed to save state:', error);
     }
@@ -123,24 +110,47 @@ const serverInstance = serve({
 }, (info) => {
     console.log(`BlockBoard run on http://localhost:${info.port}`);
     console.log(`Current grid: ${gameConfig.cols} x ${gameConfig.rows} (Total ${TOTAL_SQUARES} squares)`);
-    console.log(`State format: ${CELL_BITS}bit/cell (0 = black, 1..${MAX_COLOR_INDEX} = colors)`);
+    console.log(`State format: 24bit/cell (0 = black, 1..${PRESET_MAX} = presets, >= ${PRESET_MAX + 1} = custom RGB)`);
 });
 
-// 将 Socket.io 绑定到 Hono 的服务器实例上
-const io = new Server(serverInstance);
+// 将 Socket.io 绑定到 Hono 的服务器实例上。
+// perMessageDeflate：超过 1KB 的消息（棋盘状态）交给浏览器用 deflate 压一遍再传，
+// 几百字节的格子广播不受影响。稠密状态（每个格子颜色都不同的画）靠它能再小一个数量级；
+// 不需要的话把这个参数删掉即可
+const io = new Server(serverInstance, {
+    perMessageDeflate: {
+        threshold: 1024
+    }
+});
 
 function isValidIndex(index: number): boolean {
     return Number.isInteger(index) && index >= 0 && index < TOTAL_SQUARES;
 }
 
-// 广播单格变化：value 是权威颜色值，isBlack 是给还没刷新到新版的旧页面用的
+// 广播单格变化。
+//   value / isBlack 是给还没刷新到新版的旧页面用的（自定义颜色在它们眼里就是 15 号色）
+//   rgb 是自定义颜色的 24bit 值，新页面用它还原出真正的颜色
 function broadcastSquare(index: number): void {
     const value = gridState[index];
+    const custom = isCustomValue(value);
+
     io.emit('update-square', {
         index: index,
-        value: value,
+        value: toLegacyIndex(value),
+        rgb: custom ? value : null,
         isBlack: value === BLACK
     });
+}
+
+// 下发给新客户端的棋盘状态：优先 RLE（稀疏棋盘常常只有几十字节），
+// 只有 RLE 反而更大时（每个格子颜色都不同的噪点棋盘）才退回 3 字节/格 的稠密格式
+function encodeCompactState(): { encoding: 'rle' | 'dense'; data: string } {
+    const rle = encodeRle(gridState);
+    const dense = encodeState(gridState);
+
+    return rle.length <= dense.length
+        ? { encoding: 'rle', data: rle }
+        : { encoding: 'dense', data: dense };
 }
 
 io.on('connection', (socket: Socket) => {
@@ -148,27 +158,63 @@ io.on('connection', (socket: Socket) => {
     onlineUsers++;
     io.emit('online-users', onlineUsers);
 
-    // Bundle the "configuration" and "state" together when sending to new users,
-    // so the frontend knows how many rows and columns to render
-    socket.emit('init-game', {
+    // 客户端在握手里声明自己认识哪些状态格式：
+    //   rgb24 = 认识 24bit 取值（>= 16 是自定义颜色）和 3 字节/格 的稠密状态
+    //   rle   = 额外认识 RLE 紧凑状态
+    // 什么都没声明的（没刷新的旧页面）只发 4bit 状态：棋盘照样能看，
+    // 只是自定义颜色在它们眼里是 15 号色
+    const authCaps = socket.handshake.auth ? socket.handshake.auth.caps : undefined;
+    const caps: string[] = Array.isArray(authCaps) ? authCaps : [];
+    const supportsRgb = caps.indexOf('rgb24') >= 0;
+
+    const payload: Record<string, unknown> = {
         config: gameConfig,
-        // 4bit/格 的紧凑状态（Base64），客户端解码后映射成颜色
-        state: encodeState(gridState),
         black: BLACK,
-        maxColorIndex: MAX_COLOR_INDEX
-    });
+        maxColorIndex: PRESET_MAX,
+        rgbSupport: true
+    };
 
-    // 新协议：用画笔涂格子。
-    // brush 是颜色编号（1..MAX_COLOR_INDEX）。规则与客户端一致：
-    //   格子和画笔同色 → 擦成黑色；否则涂成画笔颜色
-    socket.on('paint-square', (payload: { index?: number; brush?: number }) => {
+    if (supportsRgb) {
+        const compact = encodeCompactState();
+
+        // 客户端没有 rle 能力时，就算 RLE 更小也只能发它认识的稠密格式
+        if (compact.encoding === 'rle' && caps.indexOf('rle') < 0) {
+            payload.stateRgb = encodeState(gridState);
+            payload.stateEncoding = 'dense';
+        } else {
+            payload.stateRgb = compact.data;
+            payload.stateEncoding = compact.encoding;
+        }
+    } else {
+        // 4bit/格（Base64）：旧页面解码后映射成预设色，自定义颜色退化成 15 号色
+        payload.state = encodeLegacyState(gridState);
+    }
+
+    socket.emit('init-game', payload);
+
+    // 涂格子的协议。
+    //   { index, brush }  brush 是预设编号（1..PRESET_MAX）
+    //   { index, rgb }    rgb 是自定义 24bit 颜色（0x000000..0xffffff）
+    // 规则与客户端一致：格子和画笔同色 → 擦成黑色；否则涂成画笔颜色。
+    // 自定义颜色只和"完全相同的自定义颜色"比较 —— 客户端预设调色板的真实色值服务端并不认识
+    socket.on('paint-square', (payload: { index?: number; brush?: number; rgb?: number }) => {
         const index = Number(payload && payload.index);
-        const brush = Number(payload && payload.brush);
-
         if (!isValidIndex(index)) return;
-        if (!Number.isInteger(brush) || brush < BLACK || brush > MAX_COLOR_INDEX) return;
 
-        gridState[index] = gridState[index] === brush ? BLACK : brush;
+        const rgb = Number(payload && payload.rgb);
+        let next: number;
+
+        if (Number.isInteger(rgb) && rgb >= 0 && rgb <= RGB_MASK) {
+            const value = customValue(rgb);
+            next = gridState[index] === value ? BLACK : value;
+        } else {
+            const brush = Number(payload && payload.brush);
+            if (!Number.isInteger(brush) || brush < 1 || brush > PRESET_MAX) return;
+
+            next = gridState[index] === brush ? BLACK : brush;
+        }
+
+        gridState[index] = next;
         broadcastSquare(index);
     });
 
