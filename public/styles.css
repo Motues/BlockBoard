@@ -29,15 +29,14 @@ body {
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='10' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white'/%3E%3C/svg%3E") 16 16, auto;
     user-select: none;
     -webkit-user-select: none;
+    /* 交给脚本处理滚轮/双指手势，避免浏览器自身的缩放与回弹 */
+    touch-action: none;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
 body.grabbing {
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='10' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white'/%3E%3C/svg%3E") 16 16, auto;
-}
-
-.cursor-click {
-    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='8' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='3' fill='white'/%3E%3C/svg%3E") 16 16, auto !important;
-    transition: transform 0.1s ease;
 }
 
 /* --- 毛玻璃 UI 组件 --- */
@@ -195,61 +194,15 @@ h1 {
     visibility: visible;
 }
 
-/* --- 视口与网格 --- */
-#viewport {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    will-change: transform;
-}
-
-#grid-container {
-    box-shadow: 0 0 50px rgba(0,0,0,0.8);
-}
-
-#grid {
-    display: grid;
-    gap: 1px;
-    background: var(--grid-gap-color); 
-    padding: 1px;
-}
-
-.cell {
-    background-color: var(--cell-black);
+/* --- 棋盘画布 --- */
+#board {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 0;              /* 面板是 z-index: 100，画布必须在它们下面 */
+    display: block;
+    touch-action: none;
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='10' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white'/%3E%3C/svg%3E") 16 16, auto;
-    position: relative;
-}
-
-@media (hover: hover) {
-    .cell:hover {
-        opacity: 0.8;
-        z-index: 10;
-        transform: scale(1.1);
-        box-shadow: 0 0 8px rgba(0,0,0,0.8);
-        transition: transform 0.2s;
-    }
-}
-
-.cell.white {
-    background-color: var(--cell-white);
-    transform: rotateY(180deg);
-    transition: transform 0.5s;
-}
-
-.cell.pending::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: rgba(255, 255, 255, 0.1);
-    animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-    0% { opacity: 0; }
-    50% { opacity: 1; }
-    100% { opacity: 0; }
 }
 
 /* 提示弹窗样式 */
