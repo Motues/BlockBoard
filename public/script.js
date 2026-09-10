@@ -52,9 +52,39 @@ const COLORS = {
     white: readColorVar(rootStyle, '--cell-white', '#eeeeee')
 };
 
+// --- 画笔颜色（右键圆环里选择）---
+// 颜色编号与服务端的 4bit 值一一对应：0 = 黑，1..N = 下面的预设颜色
+// 预设都是低饱和度（灰调）的颜色，1 号与默认的"白块"一致
+// name 用「中文 / English」格式，会显示在圆环色块的提示里
+const BRUSH_PRESETS = [
+    { color: '#eeeeee', name: '灰白（默认）/ Off White (default)' },
+    { color: '#cbb9a3', name: '米杏 / Beige' },
+    { color: '#c79a83', name: '陶土 / Terracotta' },
+    { color: '#b6bb92', name: '橄榄 / Olive' },
+    { color: '#9dba9c', name: '灰绿 / Sage' },
+    { color: '#9bb8bd', name: '灰青 / Teal' },
+    { color: '#a6a8c0', name: '灰紫 / Lavender' },
+    { color: '#c4a5ae', name: '灰粉 / Dusty Rose' }
+];
+const BRUSH_STORAGE_KEY = 'blockboard-brush-color';
+const BLACK_VALUE = 0;
+
+// 1 号颜色跟随 CSS 变量 --cell-white，改主题色时不用改两处
+BRUSH_PRESETS[0].color = COLORS.white;
+
+// 颜色值 → 实际颜色（16 项，覆盖 4bit 的全部取值）
+const VALUE_COLORS = new Array(16).fill(COLORS.white);
+VALUE_COLORS[BLACK_VALUE] = COLORS.black;
+BRUSH_PRESETS.forEach((preset, i) => {
+    VALUE_COLORS[i + 1] = preset.color;
+});
+
+// 当前画笔（1..BRUSH_PRESETS.length）
+let brushIndex = 1;
+let brushColor = VALUE_COLORS[brushIndex];
+
 // --- 棋盘数据 ---
-// true  = 黑块（默认）
-// false = 白块
+// gridState[i] 是 0..15 的颜色值：0 = 黑，1..N = BRUSH_PRESETS 里的颜色
 let board = {
     cols: 0,
     rows: 0,
@@ -65,7 +95,7 @@ let board = {
     height: 0
 };
 
-let gridState = [];
+let gridState = new Uint8Array(0);
 let pendingRequests = new Set();     // 已发出、等待服务器确认的方块
 let pendingTimers = new Map();       // 超时保护的定时器
 let animations = new Map();          // index -> { from, to, start }
@@ -160,15 +190,177 @@ function toggleOptionsPanel() {
 // 绑定设置按钮事件
 settingsButton.addEventListener('click', toggleOptionsPanel);
 
+// --- 画笔颜色圆环（右键呼出）---
+let brushRingOpen = false;
+let brushSwatches = [];
+
+// 按预设生成圆环上的色块
+function buildBrushRing() {
+    const ring = document.getElementById('brush-ring');
+    const radius = 74; // 色块离圆心的距离
+
+    BRUSH_PRESETS.forEach((preset, i) => {
+        const angle = (360 / BRUSH_PRESETS.length) * i - 90; // 从正上方开始排
+
+        const slot = document.createElement('div');
+        slot.className = 'brush-slot';
+        slot.style.transform = `rotate(${angle}deg) translateY(-${radius}px) rotate(${-angle}deg)`;
+
+        const swatch = document.createElement('button');
+        swatch.type = 'button';
+        swatch.className = 'brush-swatch';
+        swatch.dataset.index = String(i + 1);
+        swatch.title = preset.name;
+        swatch.style.background = preset.color;
+        swatch.addEventListener('click', () => {
+            setBrushIndex(i + 1);
+            closeBrushRing();
+        });
+
+        slot.appendChild(swatch);
+        ring.appendChild(slot);
+        brushSwatches.push(swatch);
+    });
+}
+
+function openBrushRing(clientX, clientY) {
+    const ring = document.getElementById('brush-ring');
+
+    // 贴着屏幕边缘时把圆环收回来，避免被裁掉
+    const margin = ring.offsetWidth / 2 + 8;
+    const x = clamp(clientX, margin, Math.max(margin, viewport.w - margin));
+    const y = clamp(clientY, margin, Math.max(margin, viewport.h - margin));
+
+    ring.style.left = x + 'px';
+    ring.style.top = y + 'px';
+    ring.classList.add('open');
+    brushRingOpen = true;
+
+    highlightActiveSwatch();
+}
+
+function closeBrushRing() {
+    if (!brushRingOpen) return;
+    brushRingOpen = false;
+    document.getElementById('brush-ring').classList.remove('open');
+}
+
+// 从设置面板里打开（给没有右键的触摸设备用）
+function openBrushRingFromPanel() {
+    const rect = optionsPanel.getBoundingClientRect();
+    openBrushRing(rect.left - 130, rect.top + rect.height / 2);
+}
+
+function onContextMenu(e) {
+    const inRing = e.target.closest && e.target.closest('#brush-ring');
+
+    // 在圆环上再次右键就收起
+    if (inRing) {
+        e.preventDefault();
+        closeBrushRing();
+        return;
+    }
+
+    // 其它 UI（页脚、设置按钮等）保留浏览器默认菜单
+    if (e.target !== canvas) return;
+
+    e.preventDefault();
+    openBrushRing(e.clientX, e.clientY);
+}
+
+function setBrushIndex(index) {
+    brushIndex = clamp(Math.round(index), 1, BRUSH_PRESETS.length);
+    brushColor = VALUE_COLORS[brushIndex];
+
+    try {
+        localStorage.setItem(BRUSH_STORAGE_KEY, String(brushIndex));
+    } catch (e) {
+        // 隐私模式等场景下写不了，忽略
+    }
+
+    updateBrushCursor();
+    highlightActiveSwatch();
+    requestRender();
+}
+
+function loadBrushIndex() {
+    let saved = null;
+    try {
+        saved = localStorage.getItem(BRUSH_STORAGE_KEY);
+    } catch (e) {
+        saved = null;
+    }
+    if (!saved) return;
+
+    const asIndex = Number(saved);
+    if (Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= BRUSH_PRESETS.length) {
+        brushIndex = asIndex;
+    } else {
+        // 兼容上一版存下来的十六进制颜色
+        const found = BRUSH_PRESETS.findIndex(
+            (preset) => preset.color.toLowerCase() === String(saved).toLowerCase()
+        );
+        if (found >= 0) brushIndex = found + 1;
+    }
+
+    brushColor = VALUE_COLORS[brushIndex];
+}
+
+function highlightActiveSwatch() {
+    for (const swatch of brushSwatches) {
+        swatch.classList.toggle('active', Number(swatch.dataset.index) === brushIndex);
+    }
+
+    // 圆心的小圆点也显示当前画笔颜色
+    document.getElementById('brush-ring-center').style.background = brushColor;
+}
+
+// 鼠标指针上的小圆跟着画笔颜色变
+function updateBrushCursor() {
+    const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
+        `<circle cx="16" cy="16" r="10" fill="${brushColor}" fill-opacity="0.35"/>` +
+        `<circle cx="16" cy="16" r="5" fill="${brushColor}"/>` +
+        '</svg>';
+
+    document.body.style.cursor =
+        `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}") 16 16, auto`;
+}
+
+// 圆环打开时，点空白处只收起圆环，不顺手切换方块
+document.addEventListener('click', (e) => {
+    if (!brushRingOpen) return;
+    if (e.target.closest && e.target.closest('#brush-ring')) return;
+
+    closeBrushRing();
+
+    // 只有点在棋盘上时才吞掉这次点击；点面板按钮的话照常执行按钮功能
+    if (e.target === canvas) {
+        e.stopPropagation();
+    }
+}, true);
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeBrushRing();
+});
+
 // --- Socket ---
+// 新服务端会在 init-game 里带上 maxColorIndex，据此判断能否用颜色协议
+let serverSupportsColor = false;
+
 socket.on('init-game', (data) => {
-    const { config, state } = data;
+    const { config, state, maxColorIndex } = data;
+    serverSupportsColor = typeof maxColorIndex === 'number';
     initBoard(config, state);
 });
 
-// 收到服务器广播：方块的目标状态确定
-socket.on('update-square', ({ index, isBlack }) => {
-    const target = isBlack === true;
+// 收到服务器广播：方块的颜色值确定
+socket.on('update-square', ({ index, value, isBlack }) => {
+    // value 是新服务端的 4bit 颜色值；isBlack 用于兼容旧服务端
+    const target = typeof value === 'number'
+        ? value
+        : (isBlack ? BLACK_VALUE : 1);
+
     const now = performance.now();
 
     // 响应到了，解除等待（风车不再"无限转"）
@@ -182,7 +374,7 @@ socket.on('update-square', ({ index, isBlack }) => {
         anim.end = Math.max(anim.end, now + SWITCH_SETTLE);
     } else if (gridState[index] !== target) {
         // 别人切换的方块：自己也播一遍同样的风车动画
-        startSwitch(index, target, now, now + SWITCH_DURATION);
+        startSwitch(index, gridState[index], target, now, now + SWITCH_DURATION);
     }
 
     gridState[index] = target;
@@ -203,13 +395,7 @@ function initBoard(config, state) {
     board.width = board.cols * board.cellSize + (board.cols - 1) * board.gap + board.padding * 2;
     board.height = board.rows * board.cellSize + (board.rows - 1) * board.gap + board.padding * 2;
 
-    const total = board.cols * board.rows;
-    gridState = new Array(total).fill(true);
-    if (state) {
-        for (let i = 0; i < total; i++) {
-            gridState[i] = state[i] !== false;
-        }
-    }
+    gridState = decodeState(state, board.cols * board.rows);
 
     for (const timer of pendingTimers.values()) {
         clearTimeout(timer);
@@ -221,6 +407,33 @@ function initBoard(config, state) {
 
     resizeCanvas();
     resetView();
+}
+
+// 解码服务端状态。
+//   新服务端：4bit/格 的 Base64（每字节两格，低 4 位在前）
+//   旧服务端：布尔数组（true = 黑）
+function decodeState(state, total) {
+    const out = new Uint8Array(total);
+
+    if (typeof state === 'string') {
+        const binary = atob(state);
+
+        for (let i = 0; i < total; i++) {
+            const byte = binary.charCodeAt(i >> 1);
+            if (Number.isNaN(byte)) break;
+
+            out[i] = (i & 1) ? ((byte >> 4) & 0x0f) : (byte & 0x0f);
+        }
+        return out;
+    }
+
+    if (Array.isArray(state)) {
+        for (let i = 0; i < total; i++) {
+            out[i] = state[i] === false ? 1 : BLACK_VALUE;
+        }
+    }
+
+    return out;
 }
 
 // --- 画布尺寸 / 设备像素比 ---
@@ -420,27 +633,29 @@ function paintBoard(g, cam) {
     g.fillStyle = COLORS.gap;
     g.fillRect(left - lineW, top - lineW, right - left + lineW * 2, bottom - top + lineW * 2);
 
-    // 2) 再画方块：按颜色分两趟，减少 fillStyle 切换
-    for (let pass = 0; pass < 2; pass++) {
-        const wantBlack = pass === 1;
-        g.fillStyle = wantBlack ? COLORS.black : COLORS.white;
+    // 2) 再画方块。每格颜色可能不同，所以只在颜色变化时切换 fillStyle
+    let lastColor = null;
 
-        for (let r = r0; r < r1; r++) {
-            const y = ys[r - r0];
-            const h = ys[r - r0 + 1] - y - lineW;
-            if (h <= 0) continue;
+    for (let r = r0; r < r1; r++) {
+        const y = ys[r - r0];
+        const h = ys[r - r0 + 1] - y - lineW;
+        if (h <= 0) continue;
 
-            for (let c = c0; c < c1; c++) {
-                const index = r * board.cols + c;
-                if (gridState[index] !== wantBlack) continue;
-                if (cam.skip && cam.skip.has(index)) continue;
+        for (let c = c0; c < c1; c++) {
+            const index = r * board.cols + c;
+            if (cam.skip && cam.skip.has(index)) continue;
 
-                const x = xs[c - c0];
-                const w = xs[c - c0 + 1] - x - lineW;
-                if (w <= 0) continue;
+            const x = xs[c - c0];
+            const w = xs[c - c0 + 1] - x - lineW;
+            if (w <= 0) continue;
 
-                g.fillRect(x, y, w, h);
+            const color = VALUE_COLORS[gridState[index]] || COLORS.white;
+            if (color !== lastColor) {
+                g.fillStyle = color;
+                lastColor = color;
             }
+
+            g.fillRect(x, y, w, h);
         }
     }
 }
@@ -515,6 +730,10 @@ function drawSwitches(now, scale, origin, lineW) {
             ? 0
             : clamp((1 - Math.max(0, anim.end - now) / SWITCH_SETTLE), 0, 1);
 
+        // 风车两半：一边是原色、一边是新色，转完落到新色
+        const fromColor = VALUE_COLORS[anim.from] || COLORS.white;
+        const toColor = VALUE_COLORS[anim.to] || COLORS.white;
+
         ctx.save();
         ctx.beginPath();
         ctx.rect(box.x, box.y, w, h);
@@ -525,16 +744,16 @@ function drawSwitches(now, scale, origin, lineW) {
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(angle);
-        ctx.fillStyle = COLORS.black;
+        ctx.fillStyle = fromColor;
         ctx.fillRect(-radius, -radius, radius * 2, radius);
-        ctx.fillStyle = COLORS.white;
+        ctx.fillStyle = toColor;
         ctx.fillRect(-radius, 0, radius * 2, radius);
         ctx.restore();
 
         // 淡出成最终颜色
         if (fade > 0) {
             ctx.globalAlpha = fade;
-            ctx.fillStyle = anim.to ? COLORS.black : COLORS.white;
+            ctx.fillStyle = toColor;
             ctx.fillRect(box.x, box.y, w, h);
         }
 
@@ -582,7 +801,8 @@ function drawHover(now, scale, origin, lineW) {
 
 // 单个悬停方块：放大 + 阴影 + 轻微变色 + 一条沿左上→右下滚动的波浪
 function drawHoverCell(now, index, x, y, w, h, value) {
-    const isBlack = gridState[index] === true;
+    const cellValue = gridState[index];
+    const isBlack = cellValue === BLACK_VALUE;
 
     const gw = Math.max(1, Math.round(w * (1 + HOVER_SCALE * value)));
     const gh = Math.max(1, Math.round(h * (1 + HOVER_SCALE * value)));
@@ -595,7 +815,7 @@ function drawHoverCell(now, index, x, y, w, h, value) {
     // 1) 底色 + 阴影：让方块浮起来
     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = Math.max(1, Math.round(8 * viewport.dpr * value));
-    ctx.fillStyle = isBlack ? COLORS.black : COLORS.white;
+    ctx.fillStyle = VALUE_COLORS[cellValue] || COLORS.white;
     ctx.fillRect(gx, gy, gw, gh);
 
     // 2) 轻微变色：黑块提亮一点、白块压暗一点，和周围一模一样的像素区分开
@@ -669,17 +889,21 @@ function hitTest(clientX, clientY) {
 
 // --- 点击方块 ---
 function onCanvasClick(e) {
-    // 点在 UI 面板上时不触发方块
-    if (e.target.closest('.glass-panel')) return;
+    // 点在 UI 面板 / 画笔圆环上时不触发方块
+    if (e.target.closest('.glass-panel, #brush-ring')) return;
     if (viewState.hasMoved) return;
 
     const index = hitTest(e.clientX, e.clientY);
     if (index < 0 || pendingRequests.has(index)) return;
 
     const now = performance.now();
+    const current = gridState[index];
+
+    // 和画笔同色 → 擦成黑色；否则涂成画笔颜色（服务端用同样的规则）
+    const target = current === brushIndex ? BLACK_VALUE : brushIndex;
 
     // 立刻开始风车动画，不等服务器；颜色先按本地预测，回包后再纠正
-    startSwitch(index, gridState[index] !== true, now, now + SWITCH_DURATION);
+    startSwitch(index, current, target, now, now + SWITCH_DURATION);
 
     pendingRequests.add(index);
     // 超时保护：服务器长时间不回包时，收回风车、保持原来的颜色
@@ -691,21 +915,22 @@ function onCanvasClick(e) {
 
     requestRender();
 
-    socket.emit('toggle-square', index);
+    socket.emit(serverSupportsColor ? 'paint-square' : 'toggle-square',
+        serverSupportsColor ? { index, brush: brushIndex } : index);
 }
 
 // 启动一次切换动画（风车）
-// to    动画结束后应该显示的颜色（true = 黑）
-// start 动画开始时间
-// end   计划结束时间；如果此时还在等服务器，风车会继续转，不会被提前结束
-function startSwitch(index, to, start, end) {
+// from/to 动画前后的颜色值
+// start   动画开始时间
+// end     计划结束时间；如果此时还在等服务器，风车会继续转，不会被提前结束
+function startSwitch(index, from, to, start, end) {
     const prev = animations.get(index);
     // 接着上一次的角度继续转，避免连续点击时风车"跳一下"
     const angle0 = prev
         ? (SWITCH_SPIN_RATE * (start - prev.start) * Math.PI * 2) % (Math.PI * 2)
         : 0;
 
-    animations.set(index, { to, start, end, angle0 });
+    animations.set(index, { from, to, start, end, angle0 });
     requestRender();
 }
 
@@ -721,7 +946,7 @@ function clearPending(index) {
 
 // --- 拖拽平移 ---
 function onPointerDown(e) {
-    if (e.target.closest('#settings-button') || e.target.closest('#options-panel')) {
+    if (e.target.closest('#settings-button') || e.target.closest('#options-panel') || e.target.closest('#brush-ring')) {
         viewState.panning = false;
         return;
     }
@@ -737,8 +962,6 @@ function onPointerDown(e) {
 
     viewState.clickStartX = point.x;
     viewState.clickStartY = point.y;
-
-    document.body.classList.add('grabbing');
 }
 
 function onPointerMove(e) {
@@ -772,7 +995,6 @@ function onPointerMove(e) {
 
 function onPointerUp() {
     viewState.panning = false;
-    document.body.classList.remove('grabbing');
 }
 
 function getPoint(e) {
@@ -836,7 +1058,6 @@ function startPinch(e) {
     viewState.panning = false;
     viewState.hasMoved = true; // 双指操作结束后不要误触方块
     markHoverDirty();
-    document.body.classList.remove('grabbing');
 }
 
 // 双指变单指时，用剩下的手指继续平移
@@ -937,6 +1158,7 @@ container.addEventListener('touchend', onTouchEnd);
 container.addEventListener('touchcancel', onTouchEnd);
 container.addEventListener('wheel', onWheel, { passive: false });
 container.addEventListener('click', onCanvasClick);
+container.addEventListener('contextmenu', onContextMenu);
 container.addEventListener('mouseleave', () => {
     onPointerUp();
     updateHover(-1);
@@ -1007,6 +1229,10 @@ function saveAsImage() {
 }
 
 // --- 启动 ---
+loadBrushIndex();
+buildBrushRing();
+highlightActiveSwatch();
+updateBrushCursor();
 resizeCanvas();
 watchDevicePixelRatio();
 requestRender();

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.0.9">
+    <link rel="stylesheet" href="styles.css?v=1.2.0">
 </head>
 <body>
 
@@ -26,6 +26,7 @@
                     <li>You can swipe the page to create</li>
                     <li>Click the block to change the color</li>
                     <li>Scroll / pinch to zoom the board</li>
+                    <li>Right click to pick a brush color</li>
                 </ul>
             </div>
         </div>
@@ -59,8 +60,11 @@
         <div class="option-item" onclick="console.log('Option: Share Link')" data-title="Share Link">
              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
         </div> -->
+        <div class="option-item" onclick="openBrushRingFromPanel()" data-title="Brush Color">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><circle cx="9.2" cy="9.6" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="14.8" cy="9.6" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </div>
         <div class="option-item" onclick="resetView()" data-title="Reset View">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.55 13.59A8 8 0 0 1 12 4a8 8 0 0 1 7.45 4.41"></path><path d="M20.45 10.41A8 8 0 0 1 12 20a8 8 0 0 1-7.45-4.41"></path></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><!-- Icon from Remix Icon by Remix Design - https://github.com/Remix-Design/RemixIcon/blob/master/License --><path fill="currentColor" d="M2 12c0 5.523 4.477 10 10 10s10-4.477 10-10S17.523 2 12 2v2a8 8 0 1 1-4.5 1.385V8h2V2h-6v2H6a9.99 9.99 0 0 0-4 8"/></svg>
         </div>
         <div class="option-item" onclick="saveAsImage()" data-title="Save as Image">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -73,7 +77,12 @@
 
     <canvas id="board"></canvas>
 
+    <!-- 画笔颜色圆环：在画布上右键（或在设置面板里点画笔图标）呼出 -->
+    <div id="brush-ring">
+        <div class="brush-ring-center" id="brush-ring-center"></div>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=1.0.9"></script>
+    <script src="script.js?v=1.2.1"></script>
 </body>
 </html>
