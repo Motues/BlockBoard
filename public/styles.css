@@ -316,8 +316,8 @@ h1 {
 /* --- 调色盘（点击圆心的彩虹圆打开）--- */
 #color-picker {
     z-index: 300;
-    width: 236px;
-    padding: 14px;
+    width: 276px;
+    padding: 14px 16px;
     border-radius: 16px;
     display: flex;
     flex-direction: column;
@@ -452,10 +452,122 @@ h1 {
     gap: 10px;
 }
 
+.picker-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* 取色器按钮：底色与图标颜色由 JS 同步成当前调色盘颜色（浅色底配深色图标） */
+.picker-eyedropper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    color: var(--picker-fg, #ffffff);
+    background: var(--picker-color, #eeeeee);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.15s ease-out, box-shadow 0.15s;
+}
+
+.picker-eyedropper:hover {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
+}
+
+.picker-eyedropper:active {
+    transform: scale(0.94);
+}
+
+/* 最近使用的颜色 */
+.picker-recent-wrap:empty {
+    display: none;
+}
+
+.picker-recent-label {
+    margin-bottom: 6px;
+    font-size: 0.72rem;
+    color: #999;
+    letter-spacing: 0.5px;
+}
+
+.picker-recent {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.picker-recent-swatch {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+    transition: transform 0.15s ease-out, box-shadow 0.15s;
+}
+
+.picker-recent-swatch:hover {
+    transform: scale(1.15);
+}
+
+.picker-recent-swatch.active {
+    border-color: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.28);
+}
+
+/* 取色浮窗：跟随鼠标，只做展示，不吃指针事件 */
+.pick-tooltip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 250;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(30, 30, 30, 0.82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+    font-size: 0.8rem;
+    letter-spacing: 1px;
+    color: #fff;
+    white-space: nowrap;
+    pointer-events: none;
+    transition: opacity 0.12s ease-out, visibility 0.12s;
+}
+
+.pick-tooltip.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.pick-tooltip-chip {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: #000000;
+}
+
 .picker-rgb {
+    flex: 0 1 auto;
+    min-width: 0;
     font-size: 0.75rem;
     color: #999;
     letter-spacing: 0.5px;
+    /* RGB 数值再宽也不要折成两行 */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .picker-done {

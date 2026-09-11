@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.3.0">
+    <link rel="stylesheet" href="styles.css?v=1.4.0">
 </head>
 <body>
 
@@ -24,10 +24,12 @@
             <div class="hint-text-en">
                 <ul>
                     <li>You can swipe the page to create</li>
-                    <li>Click the block to change the color</li>
+                    <li>Click a block to paint, tap it again to erase</li>
                     <li>Scroll / pinch to zoom the board</li>
-                    <li>Right click to pick a brush color</li>
+                    <li>Short press the right button to pick a brush color</li>
+                    <li>Hold and drag the right button to move the board</li>
                     <li>Click the rainbow circle for any RGB color</li>
+                    <li>Use the eyedropper in the palette to copy a block color</li>
                 </ul>
             </div>
         </div>
@@ -90,6 +92,8 @@
     <!-- 调色盘：拖拽 / 滑动选色，也可以直接输入 16 进制色号 -->
     <div id="color-picker" class="glass-panel hidden">
         <div class="picker-title">自定义颜色 / Custom color</div>
+        <!-- 最近使用的颜色：由 script.js 从 localStorage 里读出来渲染 -->
+        <div id="picker-recent" class="picker-recent-wrap"></div>
         <div class="picker-sv" id="picker-sv">
             <div class="picker-sv-cursor" id="picker-sv-cursor"></div>
         </div>
@@ -100,11 +104,28 @@
         </div>
         <div class="picker-actions">
             <span class="picker-rgb" id="picker-rgb">238, 238, 238</span>
-            <button type="button" id="picker-done" class="picker-done">完成 / Done</button>
+            <div class="picker-actions-right">
+                <!-- 取色器：进入后鼠标变成吸管，点棋盘上的方块即可取它的颜色 -->
+                <button type="button" id="picker-eyedropper" class="picker-eyedropper" title="取色器 / Eyedropper" aria-label="Eyedropper">
+                    <svg viewBox="0 0 24 24" width="16" height="16">
+                        <path d="M4.5 19.5h3.3l7.8-7.8-3.3-3.3-7.8 7.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path>
+                        <path d="M13.8 8.4l1.8-1.8 3.3 3.3-1.8 1.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path>
+                        <path d="M16.1 6.1l1.45-1.45a1.9 1.9 0 0 1 2.7 2.7L18.8 8.8z" fill="currentColor"></path>
+                    </svg>
+                </button>
+                <button type="button" id="picker-done" class="picker-done">完成 / Done</button>
+            </div>
         </div>
     </div>
 
+    <!-- 取色浮窗：跟随鼠标显示当前方块颜色的十六进制码 -->
+    <div id="pick-tooltip" class="pick-tooltip hidden">
+        <span class="pick-tooltip-chip" id="pick-tooltip-chip"></span>
+        <span class="pick-tooltip-hex" id="pick-tooltip-hex">#000000</span>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=1.3.0"></script>
+    <!-- 客户端按功能拆成几个 ES 模块，入口是 js/main.mjs -->
+    <script type="module" src="js/main.mjs?v=1.4.0"></script>
 </body>
 </html>
