@@ -76,6 +76,21 @@ the low nibble): the file stays 6x smaller and older builds can still read it. S
 4-bit, 1-bit and the short-lived 4-byte-per-cell layouts are recognised by their byte length and
 migrated automatically on load.
 
+### Changing the board size
+
+The board size lives in `game-config.json`, so it can change between runs. To keep the drawing, the
+loaded state is re-laid out **from the top-left corner**: when the board grows the new cells are
+appended at the bottom-right and stay black, when it shrinks the cells outside the new board are
+dropped — the overlapping area keeps its colors either way. Re-gridding row by row matters because a
+changed **column** count would otherwise shift the whole drawing sideways.
+
+Alongside `board-state.dat` the server keeps `data/board-size.json` with the size that save was made
+for, which is what makes the re-gridding (and the format detection of the variable-length 4-bit /
+1-bit layouts) exact. Without that file the size is still inferred from the byte length, which is
+exact for the 24-bit / 4-byte layouts and for any size change that keeps the column count; the one
+case that cannot be recovered is a 4-bit or 1-bit save whose *column* count also changed before
+`board-size.json` existed — that save is read cell by cell, as older builds did.
+
 ## Socket events
 
 | Event | Direction | Payload |

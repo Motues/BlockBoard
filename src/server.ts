@@ -11,6 +11,7 @@ import {
     CELL_BYTES,
     PRESET_MAX,
     RGB_MASK,
+    SourceDims,
     customValue,
     decodeState,
     encodeLegacyState,
@@ -18,6 +19,7 @@ import {
     encodeState,
     hasCustomColors,
     isCustomValue,
+    regridState,
     toLegacyIndex
 } from './state';
 
@@ -28,7 +30,7 @@ const TOTAL_SQUARES = gameConfig.rows * gameConfig.cols;
 
 // 棋盘状态：Uint32Array，每格一个 24bit 颜色值（只用低 24 位），默认全黑。
 //   0x000000           = 黑色
-//   0x000001..0x00000F = 预设颜色编号（调色板在客户端 public/script.js 的 BRUSH_PRESETS，目前用到 1..8）
+//   0x000001..0x00000F = 预设颜色编号（调色板在客户端 public/js/config.mjs 的 BRUSH_PRESETS，目前用到 1..8）
 //   >= 0x000010        = 自定义颜色，值本身就是 24bit RGB
 // 取值约定与编解码都在 src/state.ts
 const gridState = new Uint32Array(TOTAL_SQUARES);
@@ -37,20 +39,52 @@ let onlineUsers = 0;
 // Data storage path
 const DATA_DIR = path.join(__dirname, '../data');
 const DATA_FILE = path.join(DATA_DIR, 'board-state.dat');
+// 存档对应的棋盘尺寸。改 game-config.json 后，旧存档靠它还原出原来的行列数，
+// 才能按「左上角对齐」正确地扩展 / 裁剪；顺便也给 4bit / 1bit 旧格式消歧
+const META_FILE = path.join(DATA_DIR, 'board-size.json');
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Load saved state from disk（旧格式的存档会在这里自动迁移）
+function readSavedDims(): SourceDims | null {
+    try {
+        if (!fs.existsSync(META_FILE)) return null;
+
+        const meta = JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
+        const cols = Number(meta && meta.cols);
+        const rows = Number(meta && meta.rows);
+
+        if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0) {
+            return { cols, rows };
+        }
+    } catch (error) {
+        console.warn('Failed to read the saved board size, treating the save as the current size');
+    }
+
+    return null;
+}
+
+function writeSavedDims(): void {
+    try {
+        fs.writeFileSync(META_FILE, JSON.stringify({ cols: gameConfig.cols, rows: gameConfig.rows }, null, 2), 'utf-8');
+    } catch (error) {
+        console.error('Failed to write the board size file:', error);
+    }
+}
+
+// Load saved state from disk（旧格式的存档会在这里自动迁移，
+// 存档尺寸与当前配置不一致时按左上角对齐重新排布）
 function loadState(): Uint32Array {
     try {
         if (fs.existsSync(DATA_FILE)) {
             const encoded = fs.readFileSync(DATA_FILE, 'utf-8').trim();
             if (encoded.length > 0) {
                 const buffer = Buffer.from(encoded, 'base64');
-                const { state, format } = decodeState(buffer, TOTAL_SQUARES);
+                const saved = readSavedDims();
+                const { state, format, source, mismatched } =
+                    decodeState(buffer, TOTAL_SQUARES, gameConfig.cols, saved || undefined);
 
                 if (format === 'rgb24') {
                     console.log('Loaded saved board state from disk (24bit/cell, 3 bytes)');
@@ -61,10 +95,23 @@ function loadState(): Uint32Array {
                 } else if (format === 'legacy1') {
                     console.log('Detected legacy 1-bit save file, migrated to 24bit color state');
                 } else {
-                    console.warn('Save file size does not match the board size, loaded as 4-bit best effort');
+                    console.warn('Save file size does not match the board size, read as 4-bit best effort');
                 }
 
-                return state;
+                // 尺寸一致：直接用
+                if (!mismatched) return state;
+
+                // 尺寸不一致：从右下角扩展或裁剪，重叠区域的颜色原样保留
+                const fromCols = source.cols;
+                const fromRows = source.rows || (fromCols > 0 ? Math.round(state.length / fromCols) : 0);
+
+                console.warn(
+                    `Save file was made for ${fromCols} x ${fromRows}, ` +
+                    `current board is ${gameConfig.cols} x ${gameConfig.rows}: ` +
+                    'keeping the top-left part and extending / cropping the bottom-right'
+                );
+
+                return regridState(state, fromCols, fromRows, gameConfig.cols, gameConfig.rows);
             }
         }
     } catch (error) {
@@ -83,6 +130,8 @@ function saveState(): void {
         const encoded = customColors ? encodeState(gridState) : encodeLegacyState(gridState);
 
         fs.writeFileSync(DATA_FILE, encoded, 'utf-8');
+        // 状态与尺寸一起落盘，重启时才能判断存档是不是旧尺寸
+        writeSavedDims();
 
         const fileSize = Buffer.byteLength(encoded, 'utf-8');
         const layout = customColors ? `${CELL_BYTES}byte/cell` : '4bit/cell';
@@ -94,6 +143,10 @@ function saveState(): void {
 
 // Initialize grid state from saved data or default
 gridState.set(loadState());
+
+// 记下这份状态对应的尺寸：下次改配置时靠它还原旧存档的行列数。
+// 启动时先写一次，避免"改了配置但一直没触发自动保存"的窗口期
+writeSavedDims();
 
 // Auto-save every minute (60000 milliseconds)
 const SAVE_INTERVAL = 60 * 1000; // 1 minute
