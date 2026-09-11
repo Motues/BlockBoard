@@ -2,6 +2,8 @@
 
 A real-time online block board
 
+**English** | [中文](./README.zh-CN.md)
+
 ![Index](./doc/images/index.png)
 
 ## Deployment
@@ -24,7 +26,7 @@ A real-time online block board
 
 ## Configuration
 
-Configure the server in `game-config.json`
+Configure the server in `game-config.json`, reference to the file `game-config.json.example`
 
 | Name | Description |
 | --- | --- |
@@ -32,14 +34,37 @@ Configure the server in `game-config.json`
 | `cols` | The number of columns in the board |
 | `cellSize` | The size of each block in pixels |
 | `port` | The port the server will listen to |
+| `devPassword` | Password for the developer tools. Leave it empty to keep them disabled; the `DEV_PASSWORD` environment variable takes precedence over this field |
+| `devSessionHours` | How long a developer session stays valid, in hours (default 8) |
+
+## Language
+
+The interface is available in Chinese and English. On the first visit the language follows the
+browser (`navigator.language`): a Chinese browser gets Chinese, everything else gets English. The
+choice is remembered in the browser (`localStorage`, key `blockboard-language`) and can be changed at
+any time in the settings dialog.
+
+## Buttons
+
+Three round buttons sit in the bottom-right corner, all the way at the bottom of the screen:
+
+| Button | Icon | What it does |
+| --- | --- | --- |
+| **Developer tools** | terminal | Signs in / opens the developer tools (see below) |
+| **Settings** | gear | Opens the settings dialog, centred on the screen |
+| **Menu** | … | Opens the options panel: Brush Color / Reset View / Save as Image / Show Help |
+
+On touch devices (no hover, coarse pointer) the **Developer tools** button is hidden — the developer
+mode needs a left and a right mouse button, so it is desktop-only. The **Settings** entry moves into
+the options panel in that case (the last item of the menu button), so the language and the developer
+password can still be changed on a phone or tablet.
 
 ## Brush colors
 
 **Short press** the right button on the board to open the brush ring: releasing it before ~220 ms have
 passed and before the cursor moved ~6 px pops the ring up at the cursor, while **holding** it (or
 moving right away) pans the board instead, so the right button doubles as a drag handle on desktop.
-Holding the left button and dragging keeps panning as before, and a quick left click still paints /
-erases a block.
+A quick left click paints / erases a block; on desktop the left button no longer pans the view.
 
 The ring holds the preset colors; the rainbow circle in the middle picks **any 24-bit RGB color**: it
 opens a picker with a saturation/brightness area, a hue slider and a hex field (`#rgb` / `#rrggbb`).
@@ -55,94 +80,53 @@ Two extras live in that picker:
   (`localStorage`, key `blockboard-recent-colors`), newest first and de-duplicated. Pure black is
   skipped because it is the eraser color. Clicking a swatch selects it again.
 
-## State format
+## Settings
 
-Each cell takes **24 bits** (see `src/state.ts`):
+The gear button opens a small dialog in the middle of the screen with two fields:
 
-| Value | Meaning |
-| --- | --- |
-| `0x000000` | black |
-| `0x000001..0x00000F` | preset color index (the palette lives in `public/js/config.mjs`, `BRUSH_PRESETS`, currently 8 colors) |
-| `>= 0x000010` | custom color, the value itself is the 24-bit RGB |
+- **Language** — Chinese or English, applied immediately.
+- **Developer password** — stored in this browser only (`localStorage`, key
+  `blockboard-dev-password`). It is a convenience: when you click the developer tools button, this
+  saved password is used to sign in, so you do not have to type it again. Saving it empty forgets it.
 
-The 16 preset codes sit at the bottom of the range, so a custom color has to dodge them. Colors in
-`#000000..#00000F` (all visually pure black) are stored as `0x000010`, which reads back as `#000010` —
-indistinguishable by eye.
+Everything here lives in the browser, nothing is sent to the server. **Close** discards the changes,
+**Save** stores them.
 
-The board is stored as a Base64 string in `data/board-state.dat`, 3 bytes per cell: for 20000 cells
-that is 60000 bytes of payload, i.e. ~78 KiB as Base64. As long as the board contains no custom color
-the server keeps writing the older **4-bit-per-cell** layout (two cells per byte, the earlier cell in
-the low nibble): the file stays 6x smaller and older builds can still read it. Save files in the
-4-bit, 1-bit and the short-lived 4-byte-per-cell layouts are recognised by their byte length and
-migrated automatically on load.
+## Developer tools
 
-### Changing the board size
+Click the **Developer tools** button in the bottom bar to enter the mode:
 
-The board size lives in `game-config.json`, so it can change between runs. To keep the drawing, the
-loaded state is re-laid out **from the top-left corner**: when the board grows the new cells are
-appended at the bottom-right and stay black, when it shrinks the cells outside the new board are
-dropped — the overlapping area keeps its colors either way. Re-gridding row by row matters because a
-changed **column** count would otherwise shift the whole drawing sideways.
+- If a developer password is already saved in this browser, the click signs in with it immediately —
+  no dialog.
+- If no password is saved yet, the password dialog opens. A successful sign-in remembers the password
+  in this browser.
+- If the saved password is rejected (the server answers `401`), the saved password is forgotten and the
+  password dialog opens again for re-entry.
+- If the server has the developer tools disabled (no `DEV_PASSWORD` / `devPassword`), the click only
+  shows a notice; too many failed attempts show the lockout notice.
 
-Alongside `board-state.dat` the server keeps `data/board-size.json` with the size that save was made
-for, which is what makes the re-gridding (and the format detection of the variable-length 4-bit /
-1-bit layouts) exact. Without that file the size is still inferred from the byte length, which is
-exact for the 24-bit / 4-byte layouts and for any size change that keeps the column count; the one
-case that cannot be recovered is a 4-bit or 1-bit save whose *column* count also changed before
-`board-size.json` existed — that save is read cell by cell, as older builds did.
+Logging in exchanges the password for a random 32-byte token that lives in the server's memory for
+`devSessionHours` (8 h by default) and in the browser's `localStorage` (`blockboard-dev-token`), so a
+page refresh keeps the session. Logging out invalidates it server-side immediately, and restarting the
+server invalidates every token. Failed attempts from the same IP are locked out for 5 minutes after 5
+tries.
 
-## Socket events
+While the mode is on a banner sits at the top of the screen with an **Exit** button.
 
-| Event | Direction | Payload |
-| --- | --- | --- |
-| `init-game` | server → client | `{ config, stateRgb, stateEncoding, black, maxColorIndex, rgbSupport }` — `stateRgb` is the 24-bit board using the RLE layout, or the dense 3-byte one when RLE would be bigger. Clients that do not announce the `rgb24` capability (pages that have not been refreshed) get the legacy `state` field instead |
-| `paint-square` | client → server | `{ index, brush }` for a preset color or `{ index, rgb }` for a custom one; a cell already painted with that color is erased to black, otherwise it is painted with that color |
-| `toggle-square` | client → server | `index` — legacy black/white toggle, still accepted |
-| `update-square` | server → client | `{ index, value, rgb, isBlack }` — `rgb` is the 24-bit color of a custom cell (otherwise `null`), `value`/`isBlack` are kept for clients that have not refreshed yet |
-| `online-users` | server → client | number of connected users |
+- **Left button**: drag to marquee-select a rectangle — moving straight away starts the selection, and
+  holding still for ~260 ms does the same, so either way the rectangle follows the cursor. A click
+  without dragging (under 6 px) targets the closed region the block belongs to instead. Normal
+  painting is disabled in this mode.
+- **Right button** opens a menu for the current target: fill it with the brush color, reset it to
+  black, pick a custom color from the palette, or export it (PNG + JSON). With a marquee selection
+  active the menu also offers "clear selection". The menu no longer lists the preset palette colors.
+- **Closed region fill** is computed in the browser: a 4-connected flood fill of the clicked block's
+  color that must not reach the board edge. If it does, the operation is refused with "region is not
+  closed" instead of flooding the board.
 
-### Handshake capabilities
+The operations go through `POST /api/dev/paint`.
 
-The client connects with `io({ auth: { caps: ['rgb24', 'rle'] } })`:
+---
 
-| Capability | Meaning |
-| --- | --- |
-| `rgb24` | understands 24-bit cell values and the dense 3-byte state; the server then sends `stateRgb` instead of the legacy 4-bit `state` |
-| `rle` | understands the RLE state layout |
-
-### Compact state (RLE)
-
-Each run of same-colored cells is three varints: `[skipped black cells, run length, value]`, and cells
-that are never mentioned stay black. A sparse board costs a few dozen bytes instead of tens of
-kilobytes, an empty board costs nothing at all. Only a board where nearly every cell has a different
-color is bigger as RLE, and that case falls back to the dense 3-byte layout — so the payload is never
-larger than the plain encoding. Large messages are additionally compressed by the WebSocket
-`permessage-deflate` extension (engine.io `perMessageDeflate`, threshold 1 KiB).
-
-For the default 200x100 board that means a new connection transfers roughly **250 bytes** instead of
-**93 KiB**.
-
-## Client layout
-
-The client is plain ES modules (no bundler, no build step) loaded by `public/index.html` through
-`public/js/main.mjs`:
-
-| Module | Responsibility |
-| --- | --- |
-| `main.mjs` | entry: reads `localStorage`, wires everything up and starts the first frame |
-| `config.mjs` | every constant, plus the preset palette (`BRUSH_PRESETS`) and the cell-value range |
-| `shared.mjs` | runtime state shared by all modules: socket, canvas, board geometry, view state, pending queue, render scheduler |
-| `color.mjs` | colour maths: `#rrggbb` ↔ 24-bit ↔ HSV, cell value ↔ colour |
-| `brush.mjs` | current brush and the recent-colour list (persisted) |
-| `cursor.mjs` | the CSS cursor: a brush dot, or the eyedropper while picking |
-| `board.mjs` | board state decoding, hit testing and the hover highlight |
-| `camera.mjs` | viewport, zoom/pan limits and board→pixel coordinate maths |
-| `render.mjs` | painting the grid, the windmill switch animation and the PNG export |
-| `interactions.mjs` | pointer/touch/wheel input on the canvas |
-| `ring.mjs` | the brush ring, the options panel and the hint popup |
-| `picker.mjs` | the colour picker, the recent swatches and the eyedropper mode |
-| `connection.mjs` | the socket events and the global UI bindings |
-
-`shared.mjs` holds the state and the render hooks, so feature modules depend on it instead of on each
-other; `ring → picker → brush → cursor` is the only chain between feature modules.
-
+The details of the architecture, the state format, the socket protocol or the HTTP endpoints live
+in [AGENT.md](./AGENT.md) (Chinese).

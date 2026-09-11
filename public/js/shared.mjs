@@ -14,7 +14,7 @@ export const socket = io({ auth: { caps: STATE_CAPS } });
 export const canvas = document.getElementById('board');
 export const ctx = canvas.getContext('2d');
 
-export const settingsButton = document.getElementById('settings-button');
+export const menuButton = document.getElementById('menu-button');
 export const optionsPanel = document.getElementById('options-panel');
 export const menuIcon = document.getElementById('menu-icon');
 export const closeIcon = document.getElementById('close-icon');
@@ -90,6 +90,36 @@ export function consumePickJustHandled() {
 
 export function markPickJustHandled() {
     pickJustHandled = true;
+}
+
+// --- 开发者模式 ---
+// 开关由 devtools.mjs 维护（登录成功后打开），交互与渲染只读这里的状态
+let devMode = false;
+let devSelection = null; // { x0, y0, x1, y1 } 棋盘坐标下的矩形选区（含端点）
+
+export function isDevMode() {
+    return devMode;
+}
+
+export function setDevMode(value) {
+    devMode = Boolean(value);
+    if (!devMode) devSelection = null;
+}
+
+export function getDevSelection() {
+    return devSelection;
+}
+
+export function setDevSelection(rect) {
+    devSelection = rect;
+}
+
+// interactions.mjs 把画布上的按下 / 移动 / 松手 / 右键转发到 devtools，
+// 走事件而不是互相 import，避免 interactions ←→ devtools 形成循环依赖
+export const devEvents = new EventTarget();
+
+export function emitDevEvent(type, detail) {
+    devEvents.dispatchEvent(new CustomEvent(type, { detail }));
 }
 
 // --- 小工具 ---

@@ -52,8 +52,8 @@ body {
     transition: opacity 0.3s, transform 0.3s;
 }
 
-/* 默认居中样式只给顶部和底部（左侧定位的） */
-.header-ui, .footer-ui:not(#settings-button) {
+/* 默认居中样式只给顶部和底部 */
+.header-ui, .footer-ui {
     left: 50%;
     transform: translateX(-50%);
 }
@@ -89,31 +89,66 @@ h1 {
     width: auto;
 }
 
-/* --- 设置按钮和选项面板样式 --- */
-#settings-button {
-    bottom: 20px;
+/* --- 底部按钮条：开发者工具 / 设置 / 菜单 --- */
+#bottom-ui {
+    position: fixed;
     right: 20px;
+    bottom: 20px;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* .glass-panel 默认是 position: fixed，这里要回到按钮条里的流式排列 */
+.bottom-button {
+    position: relative;
     left: auto;
-    transform: none;
-    border-radius: 50%;
-    width: var(--footer-height); 
+    top: auto;
+    bottom: auto;
+    right: auto;
+    width: var(--footer-height);
     height: var(--footer-height);
     padding: 0;
+    border-radius: 50%;
     display: flex;
     justify-content: center;
     align-items: center;
+    cursor: pointer;
     transition: background 0.2s, transform 0.2s;
     pointer-events: auto;
 }
 
-#settings-button:hover {
+.bottom-button:hover {
     background: rgba(40, 40, 40, 0.65);
 }
 
-#settings-button svg {
+.bottom-button:active {
+    transform: scale(0.95);
+}
+
+.bottom-button svg {
     width: 60%;
     height: 60%;
     color: var(--text-color);
+}
+
+/* 只在移动端出现的元素（例如选项面板里的「设置」项） */
+.mobile-only {
+    display: none;
+}
+
+/* 移动端（触屏、没有悬停）：开发者工具在手机上没有左右键可用，直接藏起来；
+   设置按钮也收进选项面板里 */
+@media (hover: none) and (pointer: coarse) {
+    #devtools-button,
+    #settings-button {
+        display: none;
+    }
+
+    .option-item.mobile-only {
+        display: block;
+    }
 }
 
 #options-panel {
@@ -649,4 +684,406 @@ h1 {
 
 .hint-text-en li {
     margin: 5px 0;
+}
+
+/* --- 开发者工具 --- */
+
+/* 开启后常驻的提示条 */
+.dev-banner {
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 400;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 10px 8px 20px;
+    border-radius: 40px;
+    border-color: rgba(76, 209, 55, 0.55);
+    background: rgba(24, 44, 24, 0.78);
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
+    color: #d8ffd0;
+}
+
+.dev-banner.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.dev-banner-exit {
+    font-family: inherit;
+    font-size: 0.8rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 30px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.dev-banner-exit:hover {
+    background: rgba(255, 255, 255, 0.26);
+}
+
+/* 登录框 */
+.dev-login {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 420;
+    width: 300px;
+    padding: 18px 20px;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    text-align: left;
+}
+
+.dev-login.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, -50%) scale(0.96);
+}
+
+.dev-login-title {
+    font-size: 0.95rem;
+    color: #fff;
+}
+
+.dev-login-hint {
+    font-size: 0.78rem;
+    color: #999;
+    line-height: 1.4;
+}
+
+.dev-login-hint-error {
+    color: #ff8f8f;
+}
+
+.dev-password {
+    font-family: inherit;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    padding: 8px 10px;
+    outline: none;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.dev-password:focus {
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
+.dev-login-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.dev-btn {
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.dev-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.dev-btn-primary {
+    background: rgba(76, 209, 55, 0.28);
+    border-color: rgba(76, 209, 55, 0.5);
+}
+
+.dev-btn-primary:hover {
+    background: rgba(76, 209, 55, 0.42);
+}
+
+/* 右键菜单 */
+.dev-menu {
+    z-index: 410;
+    width: 280px;
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 10px;
+    border-radius: 14px;
+    text-align: left;
+}
+
+.dev-menu.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.dev-menu-title {
+    padding: 4px 8px 8px;
+    font-size: 0.75rem;
+    color: #9a9a9a;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 6px;
+}
+
+.dev-menu-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dev-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 8px;
+    font-family: inherit;
+    font-size: 0.82rem;
+    text-align: left;
+    color: #eee;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.dev-menu-item:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.dev-menu-swatch {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.dev-menu-danger {
+    color: #ff9d9d;
+}
+
+/* 设置弹窗（齿轮按钮，屏幕居中） */
+.settings-modal {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 440;
+    width: min(420px, calc(100vw - 40px));
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    padding: 20px 22px;
+    border-radius: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-align: left;
+}
+
+.settings-modal.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, -50%) scale(0.96);
+}
+
+.settings-title {
+    font-size: 1rem;
+    color: #fff;
+}
+
+.settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.settings-label {
+    font-size: 0.85rem;
+    color: #e6e6e6;
+}
+
+.settings-input {
+    font-family: inherit;
+    font-size: 0.9rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    padding: 8px 10px;
+    outline: none;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.settings-input:focus {
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
+/* 语言下拉：自绘的弹层，风格和弹窗一致（不用系统默认的 select 弹层） */
+.settings-select {
+    position: relative;
+}
+
+.settings-select-value {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.9rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.settings-select-value:hover,
+.settings-select.open .settings-select-value {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.settings-select-arrow {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    color: #bbb;
+    transition: transform 0.18s ease;
+}
+
+.settings-select.open .settings-select-arrow {
+    transform: rotate(180deg);
+}
+
+.settings-select-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 6px;
+    border-radius: 12px;
+    background: rgba(28, 28, 28, 0.96);
+    backdrop-filter: blur(16px) saturate(130%);
+    -webkit-backdrop-filter: blur(16px) saturate(130%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6);
+}
+
+.settings-select-menu.hidden {
+    display: none;
+}
+
+.settings-select-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.88rem;
+    color: #dddddd;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.settings-select-option:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+}
+
+.settings-select-option.active {
+    color: #fff;
+    background: rgba(76, 209, 55, 0.2);
+}
+
+/* 选中项左边的小圆点 */
+.settings-select-option::before {
+    content: '';
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4cd137;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+
+.settings-select-option.active::before {
+    opacity: 1;
+}
+
+.settings-hint {
+    font-size: 0.72rem;
+    color: #999;
+    line-height: 1.45;
+}
+
+.settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+/* 操作结果提示（z-index 比设置弹窗更高，弹窗开着时也能看见） */
+.dev-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 88px;
+    transform: translateX(-50%);
+    z-index: 460;
+    max-width: 70vw;
+    padding: 8px 16px;
+    border-radius: 30px;
+    background: rgba(30, 30, 30, 0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    font-size: 0.82rem;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out, visibility 0.18s;
+}
+
+.dev-toast.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.dev-toast-error {
+    border-color: rgba(224, 92, 92, 0.6);
+    color: #ffd7d7;
 }

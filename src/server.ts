@@ -6,6 +6,7 @@ import { Server, Socket } from 'socket.io';
 import path from 'path';
 import fs from 'fs';
 import gameConfig from '../game-config.json';
+import { DevPaintResult, registerDevApi, resolveDevPassword } from './dev-api';
 import {
     BLACK,
     CELL_BYTES,
@@ -14,6 +15,7 @@ import {
     SourceDims,
     customValue,
     decodeState,
+    encodeDiffRuns,
     encodeLegacyState,
     encodeRle,
     encodeState,
@@ -153,7 +155,20 @@ const SAVE_INTERVAL = 60 * 1000; // 1 minute
 setInterval(saveState, SAVE_INTERVAL);
 console.log(`Auto-save enabled: every ${SAVE_INTERVAL / 1000} seconds`);
 
-// 托管静态资源
+// --- 开发者工具（密码 + token 认证，见 src/dev-api.ts）---
+// 密码优先取环境变量 DEV_PASSWORD，其次 game-config.json 的 devPassword
+const devPassword = resolveDevPassword((gameConfig as { devPassword?: string }).devPassword);
+
+const devApi = registerDevApi(app, {
+    password: devPassword.password,
+    sessionHours: Number((gameConfig as { devSessionHours?: number }).devSessionHours) || 8,
+    cols: gameConfig.cols,
+    rows: gameConfig.rows,
+    paintRect: (x, y, width, height, color) => paintRect(x, y, width, height, color),
+    paintCells: (cells, color) => paintCells(cells, color)
+});
+
+// 托管静态资源（放在接口之后注册，静态文件不会盖掉 /api/*）
 app.use('/*', serveStatic({ root: path.join(__dirname, '../public') }));
 
 // 使用 Hono 官方的 serve 启动服务，并获取底层的 httpServer 实例
@@ -164,6 +179,12 @@ const serverInstance = serve({
     console.log(`BlockBoard run on http://localhost:${info.port}`);
     console.log(`Current grid: ${gameConfig.cols} x ${gameConfig.rows} (Total ${TOTAL_SQUARES} squares)`);
     console.log(`State format: 24bit/cell (0 = black, 1..${PRESET_MAX} = presets, >= ${PRESET_MAX + 1} = custom RGB)`);
+
+    if (devApi.enabled) {
+        console.log(`Developer tools: enabled (password from ${devPassword.source === 'env' ? 'DEV_PASSWORD' : 'game-config.json devPassword'})`);
+    } else {
+        console.warn('Developer tools: disabled (set DEV_PASSWORD or gameConfig.devPassword to enable them)');
+    }
 });
 
 // 将 Socket.io 绑定到 Hono 的服务器实例上。
@@ -193,6 +214,85 @@ function broadcastSquare(index: number): void {
         rgb: custom ? value : null,
         isBlack: value === BLACK
     });
+}
+
+// 批量改色的公共收尾：把变化部分编码好、广播出去。
+// start 是 runs 的基准下标（棋盘一维下标），必须一起发出去：
+// runs 里的"跳过多少格"是相对上一段结束的，客户端少了基准就会从 0 开始套用，
+// 整片改动会落到棋盘左上角去
+function buildPaintResult(
+    before: Uint32Array,
+    changed: number,
+    color: number,
+    start: number,
+    encode: () => string
+): DevPaintResult {
+    const runs = changed > 0 ? encode() : '';
+
+    if (changed > 0) {
+        io.emit('update-region', {
+            start,
+            runs,
+            // 给还没刷新到新版的旧页面兜底：它们不认识 runs
+            value: toLegacyIndex(color),
+            rgb: isCustomValue(color) ? color : null,
+            isBlack: color === BLACK
+        });
+    }
+
+    return { changed, runs };
+}
+
+// 批量改色（矩形）：把矩形区域涂成 color，并把"确实变了"的格子用一条 RLE 广播出去。
+// 开发者工具的一次操作可能覆盖上万个格子，逐格广播显然不可行，
+// 这里只发变化部分（[跳过多少格, 连续多少格, 颜色值]），客户端按同样的顺序套用
+function paintRect(x: number, y: number, width: number, height: number, color: number): DevPaintResult {
+    const before = gridState.slice();
+    let changed = 0;
+
+    for (let row = 0; row < height; row++) {
+        const rowStart = (y + row) * gameConfig.cols + x;
+
+        for (let col = 0; col < width; col++) {
+            const index = rowStart + col;
+            if (gridState[index] === color) continue;
+
+            gridState[index] = color;
+            changed++;
+        }
+    }
+
+    const start = y * gameConfig.cols + x;
+    const end = (y + height - 1) * gameConfig.cols + x + width;
+
+    return buildPaintResult(before, changed, color, start, () => encodeDiffRuns(before, gridState, start, end));
+}
+
+// 批量改色（一组散落的格子）：闭包区域填充用。
+// 区域由客户端算出来（可能是任意形状），所以这里按"下标 + 同一个颜色"广播，
+// 客户端按同样的下标逐个套用；runs 留空表示"这个颜色对所有下标都成立"
+function paintCells(cells: number[], color: number): DevPaintResult {
+    const before = gridState.slice();
+    let changed = 0;
+
+    for (const index of cells) {
+        if (!isValidIndex(index) || gridState[index] === color) continue;
+
+        gridState[index] = color;
+        changed++;
+    }
+
+    if (changed > 0) {
+        io.emit('update-region', {
+            indices: cells,
+            runs: '',
+            value: toLegacyIndex(color),
+            rgb: isCustomValue(color) ? color : null,
+            isBlack: color === BLACK
+        });
+    }
+
+    return { changed, runs: '' };
 }
 
 // 下发给新客户端的棋盘状态：优先 RLE（稀疏棋盘常常只有几十字节），

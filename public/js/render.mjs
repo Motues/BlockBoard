@@ -47,6 +47,14 @@ export function paintBoard(g, cam) {
         r1 = clamp(Math.ceil((cam.view.y1 - cam.oy) / pitchPx) + 1, 0, board.rows);
     }
 
+    // 只画指定的一块（导出选区用）
+    if (cam.crop) {
+        c0 = clamp(cam.crop.c0, 0, board.cols);
+        c1 = clamp(cam.crop.c1, c0, board.cols);
+        r0 = clamp(cam.crop.r0, 0, board.rows);
+        r1 = clamp(cam.crop.r1, r0, board.rows);
+    }
+
     // 每一列 / 每一行的边界（多算一格用于右/下边缘）
     const xs = [];
     for (let c = c0; c <= c1; c++) xs.push(colEdge(c));
@@ -205,6 +213,52 @@ export function saveAsImage() {
 
     // 截图后自动关闭选项面板
     closeOptionsPanel();
+}
+
+// 下载一张已经画好的离屏画布
+export function saveAsPng(canvasEl, filename) {
+    const link = document.createElement('a');
+    link.download = filename;
+    link.href = canvasEl.toDataURL('image/png');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// 把棋盘上的一块矩形区域画成离屏画布（开发者工具导出选区用）
+export function renderRegionToCanvas(colStart, rowStart, colCount, rowCount, scale) {
+    const pitch = board.cellSize + board.gap;
+    const lineW = lineWidthFor(scale, pitch * scale);
+
+    // 区域左上角的棋盘内部坐标：去掉外圈的 padding，让内容贴着画布边缘
+    const localX = board.padding + colStart * pitch;
+    const localY = board.padding + rowStart * pitch;
+
+    const width = Math.ceil(((colCount - 1) * pitch + board.cellSize) * scale + lineW * 2);
+    const height = Math.ceil(((rowCount - 1) * pitch + board.cellSize) * scale + lineW * 2);
+
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, width);
+    out.height = Math.max(1, height);
+
+    const g = out.getContext('2d');
+
+    // paintBoard 是按整个棋盘画的，这里把相机移到区域左上角，并只画这一片
+    paintBoard(g, {
+        scale,
+        ox: lineW - localX * scale,
+        oy: lineW - localY * scale,
+        lineW,
+        view: { x0: 0, y0: 0, x1: out.width, y1: out.height },
+        crop: {
+            c0: colStart,
+            c1: colStart + colCount,
+            r0: rowStart,
+            r1: rowStart + rowCount
+        }
+    });
+
+    return out;
 }
 
 // 把主绘制挂进渲染循环（frame 由 shared.mjs 调度）

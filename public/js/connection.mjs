@@ -4,7 +4,7 @@
 import { SWITCH_DURATION, SWITCH_SETTLE } from './config.mjs';
 import { setBrushIndex } from './brush.mjs';
 import { customValue } from './color.mjs';
-import { getGridState, initBoard } from './board.mjs';
+import { getGridState, initBoard, applyRegionPayload } from './board.mjs';
 import { resetView, resizeCanvas } from './camera.mjs';
 import { bindCanvasEvents } from './interactions.mjs';
 import { closeColorPicker, isColorPickerOpen, stopPicking } from './picker.mjs';
@@ -14,9 +14,9 @@ import {
     clearPending,
     consumePickJustHandled,
     isPickMode,
+    menuButton,
     requestRender,
     serverCaps,
-    settingsButton,
     socket,
     startSwitch,
     canvas
@@ -76,6 +76,11 @@ export function initConnection() {
     socket.on('online-users', (count) => {
         document.getElementById('onlineCount').textContent = count;
     });
+
+    // 开发者工具的批量改色广播：服务端只发变化的部分
+    socket.on('update-region', (payload) => {
+        applyRegionPayload(payload);
+    });
 }
 
 // --- 界面事件（与画布交互无关的部分）---
@@ -86,7 +91,7 @@ export function bindUiEvents() {
     setTimeout(showHintPopup, 1000);
 
     // 设置面板
-    settingsButton.addEventListener('click', toggleOptionsPanel);
+    menuButton.addEventListener('click', toggleOptionsPanel);
 
     // Esc：先退出取色模式，再依次收起调色盘与圆环
     document.addEventListener('keydown', (e) => {

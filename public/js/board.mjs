@@ -8,7 +8,8 @@ import {
     HOVER_WAVE_PERIOD,
     PICK_HOVER_SCALE,
     PRESET_MAX,
-    RGB_MASK
+    RGB_MASK,
+    SWITCH_DURATION
 } from './config.mjs';
 import { customValue, valueIsDark, valueToColor } from './color.mjs';
 import {
@@ -19,7 +20,9 @@ import {
     isPickMode,
     pendingRequests,
     pendingTimers,
+    requestRender,
     setRenderHooks,
+    startSwitch,
     viewport,
     viewState
 } from './shared.mjs';
@@ -33,6 +36,75 @@ export function getGridState() {
 
 export function isBoardReady() {
     return board.cols > 0;
+}
+
+// 批量改色（开发者工具）：两种形状，都只带"变了的部分"
+//   · 矩形：{ start, runs }，runs 是 [跳过多少格, 连续多少格, 颜色值]
+//   · 散落格子（闭合区域）：{ indices }，整片区域用同一个颜色
+// 没被提到的格子保持原样；颜色确实不同的格子会播一遍风车动画
+export function applyRegionPayload({ start, runs, indices, value, rgb, isBlack }) {
+    const plain = typeof rgb === 'number' ? rgb : (typeof value === 'number' ? value : (isBlack ? 0 : 1));
+    const now = performance.now();
+    let touched = 0;
+
+    const setCell = (index, cellValue) => {
+        if (index < 0 || index >= gridState.length || gridState[index] === cellValue) return;
+
+        startSwitch(index, gridState[index], cellValue, now, now + SWITCH_DURATION);
+        gridState[index] = cellValue;
+        touched++;
+    };
+
+    if (Array.isArray(indices)) {
+        for (const raw of indices) setCell(Number(raw), plain);
+
+        requestRender();
+        return touched;
+    }
+
+    if (typeof runs !== 'string' || runs.length === 0) return 0;
+
+    const binary = atob(runs);
+    const cursor = { pos: 0 };
+    let index = Number(start) || 0;
+
+    while (cursor.pos < binary.length) {
+        index += readVarint(binary, cursor);
+
+        const run = readVarint(binary, cursor);
+        const cellValue = readVarint(binary, cursor);
+
+        if (run <= 0 || index >= gridState.length) break;
+
+        const end = Math.min(gridState.length, index + run);
+        for (let i = index; i < end; i++) setCell(i, cellValue);
+
+        index = end;
+    }
+
+    requestRender();
+    return touched;
+}
+
+// 没有 runs 时的兜底（旧服务端 / 兼容路径）：整片区域套用同一个取值
+export function applyPlainRegion({ start, width, height, value, rgb, isBlack }) {
+    const plain = typeof rgb === 'number' ? rgb : (typeof value === 'number' ? value : (isBlack ? 0 : 1));
+
+    let touched = 0;
+    for (let row = 0; row < height; row++) {
+        const rowStart = Number(start) + row * board.cols;
+
+        for (let col = 0; col < width; col++) {
+            const index = rowStart + col;
+            if (index < 0 || index >= gridState.length || gridState[index] === plain) continue;
+
+            gridState[index] = plain;
+            touched++;
+        }
+    }
+
+    requestRender();
+    return touched;
 }
 
 // --- 初始化棋盘 ---

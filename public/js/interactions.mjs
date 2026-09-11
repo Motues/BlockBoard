@@ -30,11 +30,14 @@ import { hidePickTooltip, showPickTooltip, stopPicking } from './picker.mjs';
 import { closeBrushRing, openBrushRing } from './ring.mjs';
 import {
     animations,
+    board,
     canvas,
     clamp,
     clearPending,
+    emitDevEvent,
     getPoint,
     hoverSupported,
+    isDevMode,
     isPickMode,
     markHoverDirty,
     markPickJustHandled,
@@ -78,6 +81,9 @@ function onHoverMove(e) {
 function onCanvasClick(e) {
     // 点在 UI 面板 / 画笔圆环上时不触发方块
     if (e.target.closest('.glass-panel, #brush-ring')) return;
+
+    // 开发者模式：左键交给 devtools（长按框选 / 短按弹方块菜单），不再直接上色
+    if (isDevMode()) return;
 
     // 取色模式：点哪个方块就取哪个方块的颜色（拖动过视图不算）
     if (isPickMode()) {
@@ -152,10 +158,23 @@ function pickCellAt(index) {
 }
 
 // --- 拖拽平移 ---
+// 左键：只用来点方块（开发者模式下是框选 / 弹菜单），不参与平移 —— 平移靠右键长按拖动、
+//      触屏单指拖动和滚轮缩放
 function onPointerDown(e) {
-    if (e.target.closest('#settings-button') || e.target.closest('#options-panel') ||
-        e.target.closest('#brush-ring') || e.target.closest('#color-picker')) {
+    // 点在这些 UI 上时不参与画布交互（底部按钮条 / 各弹窗与面板）
+    if (e.target.closest('#bottom-ui') || e.target.closest('#options-panel') ||
+        e.target.closest('#brush-ring') || e.target.closest('#color-picker') ||
+        e.target.closest('#dev-menu') || e.target.closest('#dev-login') ||
+        e.target.closest('#settings-modal') || e.target.closest('#dev-banner') ||
+        e.target.closest('#dev-toast') || e.target.closest('#hint-popup')) {
         viewState.panning = false;
+        return;
+    }
+
+    // 开发者模式：左键长按框选 / 短按打开方块菜单（转发给 devtools.mjs）
+    if (isDevMode() && e.type === 'mousedown' && e.button === 0) {
+        e.preventDefault();
+        emitDevEvent('leftdown', { event: e, col: hitColumn(e), row: hitRow(e) });
         return;
     }
 
@@ -180,6 +199,9 @@ function onPointerDown(e) {
 
     if (e.type === 'mousedown' && e.button !== 0) return;
 
+    // 触屏单指平移：鼠标左键不再拖动视图
+    if (e.type === 'mousedown') return;
+
     viewState.panning = true;
     viewState.hasMoved = false;
 
@@ -189,6 +211,29 @@ function onPointerDown(e) {
 
     viewState.clickStartX = point.x;
     viewState.clickStartY = point.y;
+}
+
+// 命中的方块坐标（开发者模式用；未命中返回 -1）
+function hitColumn(e) {
+    const index = hitTestFor(e);
+    return index < 0 ? -1 : index % board.cols;
+}
+
+function hitRow(e) {
+    const index = hitTestFor(e);
+    if (index < 0) return -1;
+    const col = index % board.cols;
+    return (index - col) / board.cols;
+}
+
+function hitTestFor(e) {
+    return e.target === canvas ? hitTest(e.clientX, e.clientY) : -1;
+}
+
+// 开发者模式下：指针带着按下的左键离开窗口 / 窗口失焦时，那次 mouseup 不会再来，
+// 通知 devtools 收尾（否则框选会一直粘在光标上）
+function cancelDevPress() {
+    if (isDevMode()) emitDevEvent('leftcancel', {});
 }
 
 // 右键按住到长按阈值：开始拖动棋盘
@@ -221,6 +266,11 @@ function onPointerMove(e) {
     // 右键按下、还没决定是拖动还是点击：先什么都不做
     if (handleRightPressMove(e) && rightPress) return;
 
+    // 开发者模式：框选 / 长按判定
+    if (isDevMode()) {
+        emitDevEvent('leftmove', { event: e, col: hitColumn(e), row: hitRow(e) });
+    }
+
     if (!viewState.panning) {
         // 未拖动时更新悬停高亮（移到面板上则收起）
         onHoverMove(e);
@@ -249,6 +299,12 @@ function onPointerMove(e) {
 
 function onPointerUp(e) {
     viewState.panning = false;
+
+    // 开发者模式：收尾框选 / 弹方块菜单
+    if (isDevMode() && e && e.type === 'mouseup' && e.button === 0) {
+        emitDevEvent('leftup', { event: e, col: hitColumn(e), row: hitRow(e) });
+        return;
+    }
 
     // 右键没进入拖动就松开 = 短按：交给随后的 contextmenu 呼出颜色圆环
     if (rightPress) {
@@ -279,6 +335,14 @@ function onContextMenu(e) {
     if (inRing) {
         e.preventDefault();
         closeBrushRing();
+        return;
+    }
+
+    // 开发者模式：右键打开操作菜单（选区 / 闭合区域），不再呼出画笔圆环
+    if (isDevMode()) {
+        e.preventDefault();
+        closeBrushRing();
+        emitDevEvent('contextmenu', { event: e });
         return;
     }
 
@@ -426,6 +490,7 @@ export function bindCanvasEvents() {
             clearTimeout(rightPress.timer);
             rightPress = null;
         }
+        cancelDevPress();
         onPointerUp();
         updateHover(-1);
         if (isPickMode()) hidePickTooltip();
@@ -434,6 +499,9 @@ export function bindCanvasEvents() {
     // 阻止 Safari 的双指手势缩放页面
     document.addEventListener('gesturestart', (e) => e.preventDefault());
     document.addEventListener('gesturechange', (e) => e.preventDefault());
+
+    // 切到别的窗口时同样收不到 mouseup
+    window.addEventListener('blur', cancelDevPress);
 
     // 窗口大小变化时，重新校验缩放与位置，防止留在无效区域
     window.addEventListener('resize', () => {

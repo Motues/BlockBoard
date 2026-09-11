@@ -1,6 +1,7 @@
 // 画笔颜色圆环（右键短按呼出）：预设色块、圆心彩虹圆、设置面板入口。
 
 import { BRUSH_PRESETS } from './config.mjs';
+import { onLangChange, t } from './i18n.mjs';
 import {
     commitRecentColor,
     getBrushColor,
@@ -44,7 +45,7 @@ export function buildBrushRing() {
         swatch.type = 'button';
         swatch.className = 'brush-swatch';
         swatch.dataset.index = String(i + 1);
-        swatch.title = preset.name;
+        swatch.title = t(preset.nameKey);
         swatch.style.background = preset.color;
         swatch.addEventListener('click', () => {
             // 用户主动选中预设色：记进"最近使用"
@@ -65,6 +66,14 @@ export function buildBrushRing() {
     });
 
     refreshRingActive();
+}
+
+// 色块提示是动态写入的，换语言要重新刷一遍
+function refreshRingTitles() {
+    for (const swatch of swatches) {
+        const preset = BRUSH_PRESETS[Number(swatch.dataset.index) - 1];
+        if (preset) swatch.title = t(preset.nameKey);
+    }
 }
 
 // 画笔变化后刷新高亮（预设块 + 圆心外圈）
@@ -168,3 +177,6 @@ export function closeHintPopup() {
 
 // 画笔变化后刷新圆环状态（悬停光标由 brush.mjs 统一负责）
 onBrushChange(refreshRingActive);
+
+// 换语言后刷新色块提示
+onLangChange(refreshRingTitles);

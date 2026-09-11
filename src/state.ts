@@ -91,17 +91,26 @@ export function encodeLegacyState(state: Uint32Array): string {
 //   · "每个格子颜色都不同"的噪点棋盘：比稠密格式还大，
 //     这种情况由 server.ts 的 encodeCompactState 退回 3 字节/格
 
-function writeVarint(value: number, out: number[]): void {
+interface VarintWriter {
+    buffer: Buffer;
+    pos: number;
+}
+
+function createVarintWriter(size: number): VarintWriter {
+    return { buffer: Buffer.alloc(size), pos: 0 };
+}
+
+function writeVarint(writer: VarintWriter, value: number): void {
     let rest = value;
 
     while (rest >= 0x80) {
-        out.push((rest & 0x7f) | 0x80);
+        writer.buffer[writer.pos++] = (rest & 0x7f) | 0x80;
         rest = Math.floor(rest / 128);
     }
-    out.push(rest);
+    writer.buffer[writer.pos++] = rest;
 }
 
-function readVarint(buffer: Buffer, cursor: { pos: number }): number {
+export function readVarint(buffer: Buffer, cursor: { pos: number }): number {
     let value = 0;
     let scale = 1;
 
@@ -117,7 +126,8 @@ function readVarint(buffer: Buffer, cursor: { pos: number }): number {
 }
 
 export function encodeRle(state: Uint32Array): string {
-    const bytes: number[] = [];
+    // 最坏情况是每个格子一个色块、每个 varint 最多 4 字节，这里按格子数上界分配一次就够
+    const writer = createVarintWriter(state.length * 12 + 12);
     let cursor = 0; // 上一个色块的结束位置：它之前（和之后）的黑格都不用写出来
     let index = 0;
 
@@ -132,15 +142,50 @@ export function encodeRle(state: Uint32Array): string {
         let end = index + 1;
         while (end < state.length && state[end] === value) end++;
 
-        writeVarint(index - cursor, bytes);
-        writeVarint(end - index, bytes);
-        writeVarint(value, bytes);
+        writeVarint(writer, index - cursor);
+        writeVarint(writer, end - index);
+        writeVarint(writer, value);
 
         cursor = end;
         index = end;
     }
 
-    return Buffer.from(bytes).toString('base64');
+    return writer.buffer.subarray(0, writer.pos).toString('base64');
+}
+
+// 批量改色用：把 [startIndex, endIndex) 里"值确实变了"的格子按
+// [跳过多少格, 连续多少格, 颜色值] 打包成 RLE（没提到的格子保持原样）。
+// 与 encodeRle 的区别：这里不跳过黑色 —— 黑色在批量操作里是"擦除"这个有效结果。
+// 返回空字符串表示这一片没有任何改动
+export function encodeDiffRuns(before: Uint32Array, after: Uint32Array, start: number, end: number): string {
+    const count = end - start;
+    if (count <= 0) return '';
+
+    const writer = createVarintWriter(count * 12 + 12);
+    let index = start;
+    // "跳过多少格"是相对**上一段改动结束的位置**，不是相对区间起点（起点只在第一段成立）。
+    // 所以游标要跟着已经写出去的段走，否则第二段开始整片改动都会往后漂
+    let cursor = start;
+
+    while (index < end) {
+        if (before[index] === after[index]) {
+            index++;
+            continue;
+        }
+
+        let runEnd = index + 1;
+        const value = after[index];
+        while (runEnd < end && before[runEnd] !== after[runEnd] && after[runEnd] === value) runEnd++;
+
+        writeVarint(writer, index - cursor);
+        writeVarint(writer, runEnd - index);
+        writeVarint(writer, value);
+
+        cursor = runEnd;
+        index = runEnd;
+    }
+
+    return writer.buffer.subarray(0, writer.pos).toString('base64');
 }
 
 export function decodeRle(encoded: string, total: number): Uint32Array {

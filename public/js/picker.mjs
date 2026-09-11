@@ -19,6 +19,7 @@ import {
     rgbToHsv,
     valueRgb
 } from './color.mjs';
+import { onLangChange, t } from './i18n.mjs';
 import {
     clamp,
     colorPickerEl,
@@ -44,53 +45,80 @@ let pickerDrag = false;
 // 取色后重新打开调色盘时，先把画笔恢复成上次关面板时的颜色，
 // 免得拖过又没确认的临时颜色把吸管取到的颜色盖掉
 let committedRgb = 0xeeeeee;
+// 开发者工具借调色盘选颜色时挂上来的回调：关闭 / 完成时把当前颜色交出去
+let pickHandler = null;
 
 // 调色盘关闭时把画笔恢复成"上次确认的颜色"（由 main.mjs 在启动时初始化）
 export function primePickerBrush(rgb) {
     committedRgb = rgb & RGB_MASK;
 }
 
+// 开发者工具用：把调色盘当"选色对话框"打开，选完通过回调返回颜色。
+// anchor 给了就贴着那个点展开（否则按画笔圆环的位置定位）
+export function openColorPickerFor(onPick, anchor) {
+    pickHandler = typeof onPick === 'function' ? onPick : null;
+    openColorPicker(anchor);
+}
+
+// 开发者工具用：让调色盘以某个颜色为起点打开
+export function primePickerFromRgb(rgb) {
+    pickerRgb = rgb & RGB_MASK;
+    pickerHsv = rgbToHsv(pickerRgb);
+}
+
 export function isColorPickerOpen() {
     return pickerOpen;
 }
 
-export function openColorPicker() {
+export function openColorPicker(anchor) {
     if (!serverAllowsRgb()) return; // 老服务端不认识自定义颜色
 
     const picker = colorPickerEl;
     const ring = document.getElementById('brush-ring');
 
-    // 重新打开时：画笔先回到上次确认的颜色，再让调色盘以它为起点
-    if (!pickerOpen) {
+    // 普通流程：画笔先回到上次确认的颜色，再让调色盘以它为起点。
+    // 开发者工具借调色盘选色时（pickHandler）不改画笔，用 primePickerFromRgb 指定的起点
+    if (!pickerOpen && !pickHandler) {
         applyBrushFromRgb(committedRgb);
+        syncPickerFromBrush();
     }
 
-    // 从当前画笔出发，画笔是预设色时也把它作为调色盘的起点
-    syncPickerFromBrush();
-
     // 先量尺寸再定位（隐藏时用的是 visibility: hidden，尺寸依然可测）
-    const ringRect = ring.getBoundingClientRect();
     const ringHalf = ring.offsetWidth / 2;
     const margin = 12;
     const gap = 14;
     const w = picker.offsetWidth;
     const h = picker.offsetHeight;
 
-    const centerX = ringRect.left + ringRect.width / 2;
-    const centerY = ringRect.top + ringRect.height / 2;
+    // 有锚点（例如从开发者菜单里点「自定义颜色」）就贴着锚点展开，
+    // 否则按画笔圆环的位置来
+    let anchorX = viewport.w / 2;
+    let anchorY = viewport.h / 2;
+    let half = 0;
 
-    // 优先放在圆环右边，放不下就放左边，最后再夹进屏幕
-    let x = centerX + ringHalf + gap;
+    if (anchor && typeof anchor.x === 'number') {
+        anchorX = anchor.x;
+        anchorY = anchor.y;
+    } else {
+        const ringRect = ring.getBoundingClientRect();
+        anchorX = ringRect.left + ringRect.width / 2;
+        anchorY = ringRect.top + ringRect.height / 2;
+        half = ringHalf;
+    }
+
+    // 优先放在锚点右边，放不下就放左边，最后再夹进屏幕
+    let x = anchorX + half + gap;
     if (x + w > viewport.w - margin) {
-        x = centerX - ringHalf - gap - w;
+        x = anchorX - half - gap - w;
     }
     x = clamp(x, margin, Math.max(margin, viewport.w - w - margin));
 
-    const y = clamp(centerY - h / 2, margin, Math.max(margin, viewport.h - h - margin));
+    const y = clamp(anchorY - h / 2, margin, Math.max(margin, viewport.h - h - margin));
 
     picker.style.left = Math.round(x) + 'px';
     picker.style.top = Math.round(y) + 'px';
     picker.classList.remove('hidden');
+    renderPicker();
 
     pickerOpen = true;
 
@@ -102,9 +130,16 @@ export function openColorPicker() {
 export function closeColorPicker() {
     if (!pickerOpen) return;
 
-    // 关面板 = 确认这次选的颜色，记进"最近使用"
-    commitRecentColor();
-    committedRgb = getBrushRgb();
+    // 普通流程：关面板 = 确认这次选的颜色，记进"最近使用"；
+    // 开发者工具借调色盘选色时不碰画笔，只把颜色回调出去
+    if (pickHandler) {
+        const handler = pickHandler;
+        pickHandler = null;
+        handler(pickerRgb & RGB_MASK);
+    } else {
+        commitRecentColor();
+        committedRgb = getBrushRgb();
+    }
 
     pickerOpen = false;
     pickerDrag = false;
@@ -261,7 +296,7 @@ export function renderRecentColors() {
 
     const label = document.createElement('div');
     label.className = 'picker-recent-label';
-    label.textContent = '最近使用 / Recent';
+    label.textContent = t('picker.recent');
     wrap.appendChild(label);
 
     const list = document.createElement('div');
@@ -371,3 +406,6 @@ onBrushChange(() => {
     // 调色盘没有打开时不要回写 pickerHsv：拖到灰色（饱和度 0）时色相会被 RGB 反算冲掉
     if (pickerOpen) syncPickerFromBrush();
 });
+
+// "最近使用"这一行的小标题是动态生成的，换语言要重画
+onLangChange(renderRecentColors);

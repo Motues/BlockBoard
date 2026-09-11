@@ -60,17 +60,17 @@ export const COLORS = {
 // 预设颜色编号与服务端的单元格取值一一对应：0 = 黑，1..N = 下面的预设颜色
 // 预设都是低饱和度（灰调）的颜色，1 号与默认的"白块"一致
 // 圆心的彩虹圆另外支持任意 24bit RGB 自定义颜色
-// name 用「中文 / English」格式，会显示在圆环色块的提示里
+// nameKey 是 i18n.mjs 里的名字键（中文 / English 各一份），由 ring.mjs 取出来当色块提示
 // 1 号颜色直接取 CSS 变量 --cell-white，改主题色时不用改两处
 export const BRUSH_PRESETS = [
-    { color: COLORS.white, name: '灰白（默认）/ Off White (default)' },
-    { color: '#cbb9a3', name: '米杏 / Beige' },
-    { color: '#c79a83', name: '陶土 / Terracotta' },
-    { color: '#b6bb92', name: '橄榄 / Olive' },
-    { color: '#9dba9c', name: '灰绿 / Sage' },
-    { color: '#9bb8bd', name: '灰青 / Teal' },
-    { color: '#a6a8c0', name: '灰紫 / Lavender' },
-    { color: '#c4a5ae', name: '灰粉 / Dusty Rose' }
+    { color: COLORS.white, nameKey: 'preset.offWhite' },
+    { color: '#cbb9a3', nameKey: 'preset.beige' },
+    { color: '#c79a83', nameKey: 'preset.terracotta' },
+    { color: '#b6bb92', nameKey: 'preset.olive' },
+    { color: '#9dba9c', nameKey: 'preset.sage' },
+    { color: '#9bb8bd', nameKey: 'preset.teal' },
+    { color: '#a6a8c0', nameKey: 'preset.lavender' },
+    { color: '#c4a5ae', nameKey: 'preset.dustyRose' }
 ];
 
 // --- localStorage 键名 ---

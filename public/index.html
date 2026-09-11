@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.4.0">
+    <link rel="stylesheet" href="styles.css?v=1.5.3">
 </head>
 <body>
 
@@ -13,23 +13,22 @@
     </div>
 
     <div class="glass-panel footer-ui">
-        <div>Online: <span id="onlineCount" style="color: #4cd137;">...</span></div>
-        <div>Made by <a href="https://www.motues.top" target="_blank">Motues</a></div>
+        <div><span data-i18n="common.online">Online</span>: <span id="onlineCount" style="color: #4cd137;">...</span></div>
+        <div><span data-i18n="common.madeBy">Made by</span> <a href="https://www.motues.top" target="_blank">Motues</a></div>
     </div>
-    
+
     <!-- 提示弹窗 -->
     <div id="hint-popup" class="glass-panel hint-popup">
         <div class="hint-content">
-            <!-- <div class="hint-text">你可以滑动页面来进行创作</div> -->
             <div class="hint-text-en">
                 <ul>
-                    <li>You can swipe the page to create</li>
-                    <li>Click a block to paint, tap it again to erase</li>
-                    <li>Scroll / pinch to zoom the board</li>
-                    <li>Short press the right button to pick a brush color</li>
-                    <li>Hold and drag the right button to move the board</li>
-                    <li>Click the rainbow circle for any RGB color</li>
-                    <li>Use the eyedropper in the palette to copy a block color</li>
+                    <li data-i18n="hint.swipe">You can swipe the page to create</li>
+                    <li data-i18n="hint.paint">Click a block to paint, click it again to erase</li>
+                    <li data-i18n="hint.zoom">Scroll or pinch to zoom the board</li>
+                    <li data-i18n="hint.brush">Short press the right button to pick a brush color</li>
+                    <li data-i18n="hint.pan">Hold and drag the right button to move the board</li>
+                    <li data-i18n="hint.rgb">Click the rainbow circle for any RGB color</li>
+                    <li data-i18n="hint.eyedropper">Use the eyedropper in the palette to copy a block color</li>
                 </ul>
             </div>
         </div>
@@ -40,43 +39,25 @@
             </svg>
         </div>
     </div>
-    
-    <div id="settings-button" class="glass-panel">
-        <svg id="menu-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="1"></circle>
-            <circle cx="19" cy="12" r="1"></circle>
-            <circle cx="5" cy="12" r="1"></circle>
-        </svg>
-        <svg id="close-icon" style="display: none;" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-    </div>
 
     <div id="options-panel" class="glass-panel hidden">
-        <!-- <div class="option-item" onclick="console.log('Option: Reset View')" data-title="Reset View">
-             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.55 13.59A8 8 0 0 1 12 4a8 8 0 0 1 7.45 4.41"></path><path d="M20.45 10.41A8 8 0 0 1 12 20a8 8 0 0 1-7.45-4.41"></path></svg>
-        </div>
-        <div class="option-item" onclick="console.log('Option: Toggle Dark/Light')" data-title="Toggle Dark/Light">
-             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-        </div>
-        <div class="option-item" onclick="console.log('Option: Share Link')" data-title="Share Link">
-             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-        </div> -->
-        <div class="option-item" onclick="openBrushRingFromPanel()" data-title="Brush Color">
+        <div class="option-item" onclick="openBrushRingFromPanel()" data-title="Brush Color" data-i18n-title="option.brushColor">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><circle cx="9.2" cy="9.6" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="14.8" cy="9.6" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"></circle></svg>
         </div>
-        <div class="option-item" onclick="resetView()" data-title="Reset View">
+        <div class="option-item" onclick="resetView()" data-title="Reset View" data-i18n-title="option.resetView">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><!-- Icon from Remix Icon by Remix Design - https://github.com/Remix-Design/RemixIcon/blob/master/License --><path fill="currentColor" d="M2 12c0 5.523 4.477 10 10 10s10-4.477 10-10S17.523 2 12 2v2a8 8 0 1 1-4.5 1.385V8h2V2h-6v2H6a9.99 9.99 0 0 0-4 8"/></svg>
         </div>
-        <div class="option-item" onclick="saveAsImage()" data-title="Save as Image">
+        <div class="option-item" onclick="saveAsImage()" data-title="Save as Image" data-i18n-title="option.saveImage">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         </div>
-        <div class="option-item" onclick="showHintPopup()" data-title="Show Help">
+        <div class="option-item" onclick="showHintPopup()" data-title="Show Help" data-i18n-title="option.showHelp">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
         </div>
+        <!-- 设置：只在移动端显示（桌面端底部按钮条里有齿轮按钮） -->
+        <div id="settings-option" class="option-item mobile-only" data-title="Settings" data-i18n-title="button.settings">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </div>
     </div>
-
 
     <canvas id="board"></canvas>
 
@@ -84,15 +65,15 @@
     <div id="brush-ring">
         <!-- 圆心的彩虹圆：和其它色块一样大，点击打开调色盘。
              中间的小圆是彩虹，外圈是当前自定义颜色（没选自定义颜色时透明） -->
-        <button type="button" id="brush-ring-center" class="brush-ring-center" title="自定义颜色 / Custom color">
+        <button type="button" id="brush-ring-center" class="brush-ring-center" data-i18n-title="picker.title" title="Custom color">
             <span class="brush-ring-center-dot"></span>
         </button>
     </div>
 
     <!-- 调色盘：拖拽 / 滑动选色，也可以直接输入 16 进制色号 -->
     <div id="color-picker" class="glass-panel hidden">
-        <div class="picker-title">自定义颜色 / Custom color</div>
-        <!-- 最近使用的颜色：由 script.js 从 localStorage 里读出来渲染 -->
+        <div class="picker-title" data-i18n="picker.title">Custom color</div>
+        <!-- 最近使用的颜色：由 picker.mjs 从 localStorage 里读出来渲染 -->
         <div id="picker-recent" class="picker-recent-wrap"></div>
         <div class="picker-sv" id="picker-sv">
             <div class="picker-sv-cursor" id="picker-sv-cursor"></div>
@@ -106,14 +87,14 @@
             <span class="picker-rgb" id="picker-rgb">238, 238, 238</span>
             <div class="picker-actions-right">
                 <!-- 取色器：进入后鼠标变成吸管，点棋盘上的方块即可取它的颜色 -->
-                <button type="button" id="picker-eyedropper" class="picker-eyedropper" title="取色器 / Eyedropper" aria-label="Eyedropper">
+                <button type="button" id="picker-eyedropper" class="picker-eyedropper" data-i18n-title="picker.eyedropper" title="Eyedropper" aria-label="Eyedropper">
                     <svg viewBox="0 0 24 24" width="16" height="16">
                         <path d="M4.5 19.5h3.3l7.8-7.8-3.3-3.3-7.8 7.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path>
                         <path d="M13.8 8.4l1.8-1.8 3.3 3.3-1.8 1.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path>
                         <path d="M16.1 6.1l1.45-1.45a1.9 1.9 0 0 1 2.7 2.7L18.8 8.8z" fill="currentColor"></path>
                     </svg>
                 </button>
-                <button type="button" id="picker-done" class="picker-done">完成 / Done</button>
+                <button type="button" id="picker-done" class="picker-done" data-i18n="picker.done">Done</button>
             </div>
         </div>
     </div>
@@ -124,8 +105,87 @@
         <span class="pick-tooltip-hex" id="pick-tooltip-hex">#000000</span>
     </div>
 
+    <!-- 开发者模式提示条：开启时常驻，可退出 -->
+    <div id="dev-banner" class="glass-panel dev-banner hidden">
+        <span id="dev-banner-text" data-i18n="dev.mode">Developer mode</span>
+        <button type="button" id="dev-banner-exit" class="dev-banner-exit" data-i18n="dev.exit">Exit</button>
+    </div>
+
+    <!-- 开发者工具登录框 -->
+    <div id="dev-login" class="glass-panel dev-login hidden">
+        <div class="dev-login-title" data-i18n="dev.toolsTitle">Developer tools</div>
+        <div id="dev-login-hint" class="dev-login-hint" data-i18n="dev.loginHint">Enter the password the server was started with</div>
+        <input type="password" id="dev-password" class="dev-password" data-i18n-placeholder="dev.password" placeholder="Password" spellcheck="false" autocomplete="off">
+        <div class="dev-login-actions">
+            <button type="button" id="dev-login-cancel" class="dev-btn" data-i18n="common.cancel">Cancel</button>
+            <button type="button" id="dev-login-submit" class="dev-btn dev-btn-primary" data-i18n="dev.login">Login</button>
+        </div>
+    </div>
+
+    <!-- 开发者工具右键菜单 -->
+    <div id="dev-menu" class="glass-panel dev-menu hidden">
+        <div id="dev-menu-title" class="dev-menu-title"></div>
+        <div id="dev-menu-body" class="dev-menu-body"></div>
+    </div>
+
+    <!-- 设置弹窗：语言 + 开发者密码（都保存在本地） -->
+    <div id="settings-modal" class="glass-panel settings-modal hidden">
+        <div class="settings-title" data-i18n="settings.title">Settings</div>
+
+        <div class="settings-field">
+            <span class="settings-label" data-i18n="settings.language">Language</span>
+            <!-- 自绘的下拉：系统原生 select 的弹层没法跟着主题走 -->
+            <div class="settings-select" id="settings-language">
+                <button type="button" id="settings-language-value" class="settings-select-value" aria-haspopup="listbox" aria-expanded="false">
+                    <span id="settings-language-label">English</span>
+                    <svg class="settings-select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div id="settings-language-menu" class="settings-select-menu hidden" role="listbox">
+                    <button type="button" class="settings-select-option" role="option" data-lang="zh" aria-selected="false">中文</button>
+                    <button type="button" class="settings-select-option" role="option" data-lang="en" aria-selected="true">English</button>
+                </div>
+            </div>
+        </div>
+        <div class="settings-hint" data-i18n="settings.languageHint">The first visit follows your browser language; the choice made here wins from then on.</div>
+
+        <div class="settings-field">
+            <label class="settings-label" for="settings-dev-password" data-i18n="settings.devPassword">Developer password</label>
+            <input type="password" id="settings-dev-password" class="settings-input" placeholder="Password" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="settings-hint" data-i18n="settings.devPasswordHint">Kept in this browser only, and used to sign in when you click the developer tools button. Save it empty to forget it.</div>
+
+        <div class="settings-actions">
+            <button type="button" id="settings-close" class="dev-btn" data-i18n="common.close">Close</button>
+            <button type="button" id="settings-save" class="dev-btn dev-btn-primary" data-i18n="common.save">Save</button>
+        </div>
+    </div>
+
+    <!-- 底部按钮条：开发者工具 / 设置 / 菜单（不显示悬浮提示，只留无障碍名字） -->
+    <div id="bottom-ui">
+        <div id="devtools-button" class="glass-panel bottom-button" role="button" tabindex="0" data-i18n-aria-label="button.devTools" aria-label="Developer tools">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+        </div>
+        <div id="settings-button" class="glass-panel bottom-button" role="button" tabindex="0" data-i18n-aria-label="button.settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </div>
+        <div id="menu-button" class="glass-panel bottom-button" role="button" tabindex="0" data-i18n-aria-label="button.menu" aria-label="Menu">
+            <svg id="menu-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="1"></circle>
+                <circle cx="19" cy="12" r="1"></circle>
+                <circle cx="5" cy="12" r="1"></circle>
+            </svg>
+            <svg id="close-icon" style="display: none;" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </div>
+    </div>
+
+    <!-- 操作结果提示 -->
+    <div id="dev-toast" class="dev-toast hidden"></div>
+
     <script src="/socket.io/socket.io.js"></script>
     <!-- 客户端按功能拆成几个 ES 模块，入口是 js/main.mjs -->
-    <script type="module" src="js/main.mjs?v=1.4.0"></script>
+    <script type="module" src="js/main.mjs?v=1.5.3"></script>
 </body>
 </html>

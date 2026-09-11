@@ -1,0 +1,8 @@
+{
+  "rows": 100,
+  "cols":200,
+  "cellSize": 25,
+  "port": 33333,
+  "devPassword": "",
+  "devSessionHours": 8
+}
