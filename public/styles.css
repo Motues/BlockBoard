@@ -1,10 +1,6 @@
-@font-face {
-    font-family: 'Pixelify Sans';
-    src: url('./fonts/PixelifySans-Regular.woff2') format('woff2');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
-}
+/* FusionPixel */
+@import url('fonts/fusion-pixel/fusion-pixel-12px-monospaced-zh_hans/result.css');
+
 
 :root {
     --bg-color: #222222;       
@@ -24,7 +20,7 @@ body {
     height: 100vh;
     overflow: hidden;
     background-color: var(--bg-color);
-    font-family: "Pixelify Sans", 'Segoe UI', sans-serif;
+    font-family: 'FusionPixel', monospace;
     color: var(--text-color);
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='10' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white'/%3E%3C/svg%3E") 16 16, auto;
     user-select: none;

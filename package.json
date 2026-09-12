@@ -1,6 +1,6 @@
 {
   "name": "BlockBoard",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "A real-time online block board",
   "scripts": {
     "dev": "ts-node src/server.ts",

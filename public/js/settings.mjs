@@ -5,7 +5,7 @@
 //   · 开发者密码只存在这台设备的浏览器里（blockboard-dev-password），
 //     点「开发者工具」时会拿它去服务端换 token，校验始终在服务端
 
-import { getLang, setLang, t } from './i18n.mjs';
+import { getLang, setLang, t, LANGUAGES } from './i18n.mjs';
 import { closeOptionsPanel } from './ring.mjs';
 import { toast } from './toast.mjs';
 
@@ -52,7 +52,8 @@ export function clearSavedDevPassword() {
 // 语言名用它自己的语言写，不随界面语言变
 function renderLanguage() {
     const lang = getLang();
-    langLabelEl.textContent = lang === 'zh' ? '中文' : 'English';
+    const current = LANGUAGES.find(item => item.code === lang);
+    langLabelEl.textContent = current ? current.label : lang;
 
     for (const option of langOptionEls) {
         const active = option.dataset.lang === lang;
