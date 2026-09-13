@@ -6,8 +6,10 @@ import { GAP_SIZE, PADDING_SIZE, SWITCH_SPIN_RATE } from './config.mjs';
 // 握手里告诉服务端自己认识哪些状态格式（见 src/server.ts 的 init-game）：
 //   rgb24 = 24bit 取值（>= 16 是自定义颜色）+ 3 字节/格 的稠密状态
 //   rle   = RLE 紧凑状态（跳过黑格，通常只有几十字节）
-// 服务端会据此只发一份状态，而不是把几种格式都塞过来
-const STATE_CAPS = ['rgb24', 'rle'];
+//   bin   = 状态用二进制发（ArrayBuffer），省掉 base64 的 33% 与客户端的 atob
+//   batch = 认识合并广播 update-squares（一个 16ms 窗口内的多条单格改动合成一条）
+// 服务端会据此只发一份状态，并且只发客户端认识的格式
+const STATE_CAPS = ['rgb24', 'rle', 'bin', 'batch'];
 
 export const socket = io({ auth: { caps: STATE_CAPS } });
 
@@ -176,11 +178,32 @@ export function markHoverDirty() {
 
 let rafId = null;
 
-// 合并同一帧内的多次重绘请求
-export function requestRender() {
+// 棋盘（格子颜色 + 风车动画）的版本号：渲染层用它判断离屏棋盘缓存还能不能用
+let boardRevision = 0;
+
+export function markBoardDirty() {
+    boardRevision += 1;
+}
+
+export function getBoardRevision() {
+    return boardRevision;
+}
+
+function scheduleFrame() {
     if (rafId === null) {
         rafId = requestAnimationFrame(frame);
     }
+}
+
+// 画面变了：保守地让棋盘缓存失效，再排一帧
+export function requestRender() {
+    markBoardDirty();
+    scheduleFrame();
+}
+
+// 只有覆盖层（悬停高亮）变了：棋盘像素没动，直接复用缓存的棋盘位图
+export function requestOverlayRender() {
+    scheduleFrame();
 }
 
 function frame(now) {
@@ -192,9 +215,10 @@ function frame(now) {
 
     renderHooks.render(now);
 
-    // 有动画、等待服务器回包或有悬停高亮时继续保持刷新
+    // 有动画、等待服务器回包或有悬停高亮时继续保持刷新。
+    // 这里用不自增版本号的 scheduleFrame：自转的帧不该让棋盘缓存失效
     if (requiresMoreFrames()) {
-        requestRender();
+        scheduleFrame();
     }
 }
 
@@ -205,6 +229,8 @@ function cleanupAnimations(now) {
         if (pendingRequests.has(index)) continue;
         if (now >= anim.end) {
             animations.delete(index);
+            // 动画集合决定棋盘要跳过哪些格子，删掉一个就得重画棋盘层
+            markBoardDirty();
         }
     }
 }

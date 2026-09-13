@@ -20,6 +20,7 @@ import {
     isPickMode,
     pendingRequests,
     pendingTimers,
+    requestOverlayRender,
     requestRender,
     setRenderHooks,
     startSwitch,
@@ -64,15 +65,19 @@ export function applyRegionPayload({ start, runs, indices, value, rgb, isBlack }
 
     if (typeof runs !== 'string' || runs.length === 0) return 0;
 
-    const binary = atob(runs);
+    // runs 是 base64 文本，先转成字节数组再读 varint：
+    // readVarint 是按字节下标取值的（二进制状态也共用它），传字符串会把字符当数字算成 0
+    const bytes = toBytes(runs);
+    if (!bytes) return 0;
+
     const cursor = { pos: 0 };
     let index = Number(start) || 0;
 
-    while (cursor.pos < binary.length) {
-        index += readVarint(binary, cursor);
+    while (cursor.pos < bytes.length) {
+        index += readVarint(bytes, cursor);
 
-        const run = readVarint(binary, cursor);
-        const cellValue = readVarint(binary, cursor);
+        const run = readVarint(bytes, cursor);
+        const cellValue = readVarint(bytes, cursor);
 
         if (run <= 0 || index >= gridState.length) break;
 
@@ -133,38 +138,74 @@ export function initBoard(config, payload, hooks) {
     resetView();
 }
 
-// 服务端下发的棋盘状态可能是三种形态：
-//   1. stateRgb + stateEncoding（当前）：24bit，'rle' 是紧凑格式、'dense' 是 3 字节/格
+// 服务端下发的棋盘状态可能是几种形态：
+//   1. stateRgb + stateEncoding（当前）：24bit
+//        'rle' / 'dense'       —— base64 文本（老协议 / 老服务端）
+//        'rle-bin' / 'dense-bin' —— 二进制（socket.io 的二进制附件，浏览器里是 ArrayBuffer）
 //   2. state32（上一版服务端）：24bit，4 字节/格
 //   3. state：4bit，旧服务端 / 没刷新过的旧页面
 function decodeBoardState(payload, total) {
-    if (typeof payload.stateRgb === 'string') {
-        return payload.stateEncoding === 'rle'
-            ? decodeRleState(payload.stateRgb, total)
-            : decodeStateRgb(payload.stateRgb, total, 3);
+    if (payload.stateRgb !== undefined && payload.stateRgb !== null) {
+        const bytes = toBytes(payload.stateRgb);
+        if (!bytes) return new Uint32Array(total);
+
+        const encoding = typeof payload.stateEncoding === 'string' ? payload.stateEncoding : '';
+        return encoding.indexOf('rle') === 0
+            ? decodeRleState(bytes, total)
+            : decodeStateRgb(bytes, total, 3);
     }
 
-    if (typeof payload.state32 === 'string') {
+    if (payload.state32 !== undefined && payload.state32 !== null) {
+        const bytes = toBytes(payload.state32);
+        if (!bytes) return new Uint32Array(total);
+
         // 上一版服务端：只有明确写了 stateFormat: 'rgb24' 才是 3 字节/格，
         // 更早的那版不发 stateFormat，是 4 字节/格
-        return decodeStateRgb(payload.state32, total, payload.stateFormat === 'rgb24' ? 3 : 4);
+        return decodeStateRgb(bytes, total, payload.stateFormat === 'rgb24' ? 3 : 4);
     }
 
     return decodeState(payload.state, total);
 }
 
-// 解码服务端状态（旧协议）。
+// 把服务端发来的状态统一成字节数组。
+// socket.io 的二进制附件在浏览器里是 ArrayBuffer（engine.io 把 WebSocket 的 binaryType
+// 设成了 arraybuffer），另外兼容 Uint8Array、Node 的 Buffer（ArrayBufferView）、
+// 以及 JSON 化的 { type: 'Buffer', data: [...] } 和 base64 字符串
+function toBytes(data) {
+    if (!data) return null;
+
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+
+    if (typeof data === 'string') {
+        try {
+            const binary = atob(data);
+            const out = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+            return out;
+        } catch {
+            return null;
+        }
+    }
+
+    if (data.type === 'Buffer' && Array.isArray(data.data)) return Uint8Array.from(data.data);
+
+    return null;
+}
+
+// 解码旧协议的服务端状态（只可能是老服务端发的 base64）。
 //   4bit/格 的 Base64（每字节两格，低 4 位在前）
 //   布尔数组（true = 黑）
 function decodeState(state, total) {
     const out = new Uint32Array(total);
 
     if (typeof state === 'string') {
-        const binary = atob(state);
+        const bytes = toBytes(state);
+        if (!bytes) return out;
 
         for (let i = 0; i < total; i++) {
-            const byte = binary.charCodeAt(i >> 1);
-            if (Number.isNaN(byte)) break;
+            const byte = bytes[i >> 1];
+            if (byte === undefined) break;
 
             out[i] = (i & 1) ? ((byte >> 4) & 0x0f) : (byte & 0x0f);
         }
@@ -180,25 +221,24 @@ function decodeState(state, total) {
     return out;
 }
 
-// 解码服务端状态（24bit/格）。
+// 解码 24bit/格 的状态（裸字节，不再经过 base64）。
 //   bytesPerCell = 3：当前格式，每格 3 字节小端
 //   bytesPerCell = 4：上一版格式，每格 4 字节，高 8 位是"自定义颜色"标记
-function decodeStateRgb(encoded, total, bytesPerCell) {
+function decodeStateRgb(bytes, total, bytesPerCell) {
     const out = new Uint32Array(total);
-    const binary = atob(encoded);
     const step = bytesPerCell === 4 ? 4 : 3;
 
     for (let i = 0; i < total; i++) {
         const offset = i * step;
-        if (offset + step > binary.length) break;
+        if (offset + step > bytes.length) break;
 
         if (step === 4) {
             // 上一版：高 8 位是标记位，低 24 位才是颜色
             const raw = (
-                binary.charCodeAt(offset) |
-                (binary.charCodeAt(offset + 1) << 8) |
-                (binary.charCodeAt(offset + 2) << 16) |
-                (binary.charCodeAt(offset + 3) << 24)
+                bytes[offset] |
+                (bytes[offset + 1] << 8) |
+                (bytes[offset + 2] << 16) |
+                (bytes[offset + 3] << 24)
             ) >>> 0;
 
             out[i] = (raw & 0x01000000) ? customValue(raw & RGB_MASK) : (raw & PRESET_MAX);
@@ -206,9 +246,9 @@ function decodeStateRgb(encoded, total, bytesPerCell) {
         }
 
         out[i] = (
-            binary.charCodeAt(offset) |
-            (binary.charCodeAt(offset + 1) << 8) |
-            (binary.charCodeAt(offset + 2) << 16)
+            bytes[offset] |
+            (bytes[offset + 1] << 8) |
+            (bytes[offset + 2] << 16)
         ) >>> 0;
     }
 
@@ -216,12 +256,12 @@ function decodeStateRgb(encoded, total, bytesPerCell) {
 }
 
 // 读取 varint（每字节 7 位，最高位是"还有后续字节"标志）
-function readVarint(binary, cursor) {
+function readVarint(bytes, cursor) {
     let value = 0;
     let scale = 1;
 
-    while (cursor.pos < binary.length) {
-        const byte = binary.charCodeAt(cursor.pos++);
+    while (cursor.pos < bytes.length) {
+        const byte = bytes[cursor.pos++];
         value += (byte & 0x7f) * scale;
 
         if ((byte & 0x80) === 0) break;
@@ -234,17 +274,16 @@ function readVarint(binary, cursor) {
 // 解码 RLE 紧凑状态（与 src/state.ts 的 encodeRle 对应）：
 // 每个色块三个 varint = [跳过多少个黑格, 连续同色多少格, 颜色值]，
 // 没被覆盖的格子保持黑色
-function decodeRleState(encoded, total) {
+function decodeRleState(bytes, total) {
     const out = new Uint32Array(total);
-    const binary = atob(encoded);
     const cursor = { pos: 0 };
     let index = 0;
 
-    while (cursor.pos < binary.length) {
-        index += readVarint(binary, cursor);
+    while (cursor.pos < bytes.length) {
+        index += readVarint(bytes, cursor);
 
-        const run = readVarint(binary, cursor);
-        const value = readVarint(binary, cursor);
+        const run = readVarint(bytes, cursor);
+        const value = readVarint(bytes, cursor);
 
         if (run <= 0 || index >= total) break;
 
@@ -310,9 +349,9 @@ export function updateHover(index) {
         setHoverTarget(state, 1);
     }
 
-    // 悬停目标变了必须主动申请一帧：渲染循环只在还有动画 / 缓动时才自己接着跑，
-    // 不重绘的话方块放大（尤其是取色器模式下）根本不会出现
-    requestRender();
+    // 悬停只影响覆盖层（高亮 / 放大），棋盘本身的像素没动：
+    // 渲染层可以复用缓存的棋盘位图，不必整盘重画
+    requestOverlayRender();
 }
 
 // 悬停缓动还要不要继续：有缓动没走完，或者还有方块处于悬停（波浪一直在滚）

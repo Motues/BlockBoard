@@ -5,11 +5,12 @@
 ## 项目结构
 
 - `src/server.ts` —— Hono + socket.io 服务端：棋盘状态、单格与批量改色、静态资源托管、自动存档。
-- `src/state.ts` —— 棋盘状态的取值约定与编解码（24bit / 4bit / 1bit 存档、RLE 紧凑状态、批量差量 runs、按左上角对齐的重排）。
+- `src/state.ts` —— 棋盘状态的取值约定与编解码（24bit / 4bit / 1bit 存档、RLE 紧凑状态、批量差量 runs、按左上角对齐的重排）。编码一律先出 `Buffer`（`encodeStateBuffer` / `encodeLegacyStateBuffer` / `encodeRleBuffer`），`encodeState` 之类的字符串版只是它的 base64 包装；存档是带 magic 与 deflate 的 v2 格式（`buildSaveFile` / `parseSaveFile`）。
 - `src/dev-api.ts` —— 开发者工具的服务端部分：密码换 token、token 校验、批量改色接口。
 - `public/` —— 纯 ES module 客户端，无打包、无构建步骤，由 `public/index.html` 通过 `public/js/main.mjs` 加载。
 - `game-config.json` —— 棋盘尺寸、端口、开发者密码、会话时长。
 - `data/` —— 运行时生成的存档目录（`board-state.dat`、`board-size.json`），不进版本库。
+- [FEATURE.md](./FEATURE.md) —— 还没做的同步优化（分块下发 / 增量同步 / 瓦片）。
 
 ## 客户端布局
 
@@ -21,9 +22,9 @@
 | `color.mjs` | 颜色计算：`#rrggbb` ↔ 24bit ↔ HSV、单元格取值 ↔ 颜色 |
 | `brush.mjs` | 当前画笔与最近颜色列表（持久化） |
 | `cursor.mjs` | CSS 光标：画笔圆点，取色模式下换成吸管 |
-| `board.mjs` | 棋盘状态解码、命中测试、悬停高亮、批量改色广播的落地 |
+| `board.mjs` | 棋盘状态解码（含二进制状态）、命中测试、悬停高亮、批量改色广播的落地 |
 | `camera.mjs` | 视口、缩放 / 平移边界、棋盘坐标 ↔ 屏幕坐标 |
-| `render.mjs` | 网格绘制、风车切换动画、PNG 导出、区域导出 |
+| `render.mjs` | 棋盘层离屏缓存、1 像素/格 的 LOD 位图、网格绘制、风车切换动画、PNG 导出、区域导出 |
 | `interactions.mjs` | 画布上的指针 / 触摸 / 滚轮输入，并把事件转发给开发者工具 |
 | `devtools.mjs` | 开发者模式：登录、框选、右键菜单、闭合区域填充、导出 |
 | `ring.mjs` | 画笔圆环、选项面板、帮助弹窗 |
@@ -50,9 +51,34 @@
 
 渲染循环是"按需自转"的：`requestRender()` 只申请一帧，`frame()` 末尾只有
 `requiresMoreFrames()` 为真（有风车动画、有待确认的回包、或还有悬停缓动没走完）才会继续排下一帧，
-完全静止时循环会停下来。所以**任何改变画面状态的入口都必须自己 `requestRender()`** ——
-例如 `board.mjs` 的 `updateHover()` 在悬停目标变化后要主动申请一帧，否则
-（尤其取色器模式下的）方块放大要等到下一次别的重绘才会出现。
+完全静止时循环会停下来。所以**任何改变画面状态的入口都必须自己 `requestRender()`**。
+
+两个入口，别用错：
+
+| 函数 | 用途 | 副作用 |
+| --- | --- | --- |
+| `requestRender()` | 格子颜色 / 相机 / 版面变了 | `markBoardDirty()` 自增 `boardRevision`，棋盘层缓存失效 |
+| `requestOverlayRender()` | 只有覆盖层（悬停高亮）变了 | 只排一帧，不动版本号 |
+
+`render.mjs` 的棋盘层缓存（离屏 canvas）就是靠 `boardRevision` + 相机参数做键的：
+悬停/风车每帧都在动，但棋盘像素没动，所以那些帧只做一次 `drawImage`。
+`frame()` 自己续帧时必须用内部的 `scheduleFrame()`（不自增版本号），
+否则每帧都会把缓存打掉；而 `cleanupAnimations()` 删掉一个风车后**必须** `markBoardDirty()`，
+因为它改变了"棋盘要跳过哪些格子"这个集合。
+
+### 大棋盘的渲染（`render.mjs`）
+
+逐格 `fillRect` 的成本是 O(可见格数)，一两百万格时单帧就是几百毫秒，所以有两层处理：
+
+- **逐格路径**（格子间距 ≥ `MIN_LINE_PITCH` = 6 物理像素）：只比较格子取值（数字），
+  取值变化时才调用 `valueToColor()`（自定义色要拼字符串，是最贵的一笔）；
+- **LOD 路径**（间距更小、连网格线都不画了）：把可见范围填进一张"1 像素/格"的 `ImageData`
+  （`Uint32` 视图按字节序打包 RGBA，`packCell()`），再用 `imageSmoothingEnabled = false`
+  放大贴上来，成本从 O(格数) 次 `fillRect` 变成 1 次 `drawImage`。位图按
+  `boardRevision + 可见范围` 缓存，平移时只重填不重新分配。
+
+注意**不能**把相邻同色格并成一个 `fillRect`：格子之间那条缝隙就是网格线的可见部分，
+合并会把网格线盖掉（缩到看不见网格线的情况已经由 LOD 接手）。
 
 ### 显隐动画（`styles.css`）
 
@@ -115,46 +141,68 @@ Edge 自带的「鼠标手势」是**浏览器级**功能：长按右键拖动�
 
 存档：
 
-- `data/board-state.dat` —— Base64 文本。有自定义颜色时按 24bit（每格 3 字节）写；
-  棋盘上没有任何自定义颜色时仍然写旧的 4bit/格 布局（每字节两格，前一个格子放低 4 位），
-  文件小 6 倍且旧版本程序也能读。
+- `data/board-state.dat` —— **v2 格式**：`'BBS2'` + 1 字节 flags（位 0 = 载荷是 24bit/格）+ `uint32LE cols`
+  + `uint32LE rows` + `deflate(裸状态字节)`，共 13 字节头。带自定义颜色就写 24bit（3 字节/格），
+  否则写 4bit/格（每字节两格，前一个格子放低 4 位），文件小 6 倍且旧版本程序也能读。
+  写盘是「先写 `.tmp` 再 `rename`」（原子替换，崩了不会留半个文件），并且**只有棋盘真的变了才写**
+  （`stateRev !== savedRev` 才动手，见下面的自动存档）。
 - `data/board-size.json` —— 这份存档对应的 `{ cols, rows }`。启动时先写一次，
-  每次自动存档（每 60 秒）时一起更新；它是尺寸变化后精确重排、以及给 4bit / 1bit 旧格式消歧的依据。
+  每次自动存档（每 60 秒）时一起更新；它主要是给**旧格式**存档消歧用的（v2 的尺寸在文件头里）。
+- 自动存档：`setInterval(saveState, 60s)`，`saveState()` 第一件事就是比较 `stateRev` 与 `savedRev`，
+  没改动直接返回 —— 不再每分钟重写一次几 MB 的文件。
 
-旧存档识别与迁移（`decodeState`）：按字节长度依次判定 **24bit（3 字节/格）→ 32bit（4 字节/格，
-高 8 位是自定义颜色标记）→ 4bit（每字节两格）→ 1bit（每字节八格）**。
+旧存档仍然能读（`loadState`）：先试 `parseSaveFile`（v2）；不是 v2 就把整个文件当成 base64 文本，
+交给 `decodeState` 按字节长度依次判定 **24bit（3 字节/格）→ 32bit（4 字节/格，高 8 位是自定义颜色标记）
+→ 4bit（每字节两格）→ 1bit（每字节八格）**。
 判定顺序很关键：先看字节数是否正好等于某种格式在当前配置下的长度，都不匹配再尝试反推格子数，
 否则「比当前棋盘小的 4bit 存档」会被当成 24bit 读出乱码。字节数不足以反推尺寸时用
 `board-size.json` 里的上一个配置消歧，仍然没有就按更常见的 4bit 读。
+旧存档会在下一次真正发生改动时被自动写成 v2（不需要手动迁移）。
 
 改棋盘尺寸（`game-config.json` 的 `rows` / `cols` 变了）时按**左上角对齐**重排（`regridState`）：
 逐行整段搬运，棋盘变大时右下角补黑，变小时丢弃超出部分，重叠区域颜色原样保留。
 不能只按一维数组截断 / 补零 —— 列数一变一维下标与二维行列就对不上，整幅画会斜着错位。
-`data/board-size.json` 缺失时尺寸靠字节长度推断：24bit / 4byte 布局精确，只改行数也精确；
+v2 存档的尺寸是精确的；旧格式存档尺寸靠字节长度推断：24bit / 4byte 布局精确，只改行数也精确；
 唯一无法还原的是「4bit 或 1bit 存档且列数也变了」，那种情况退化成逐格裁剪 / 补黑（改动前的旧行为）。
 
 ## Socket 事件（`src/server.ts`）
 
 | 事件 | 方向 | 载荷 |
 | --- | --- | --- |
-| `init-game` | server → client | `{ config, stateRgb, stateEncoding, black, maxColorIndex, rgbSupport }`；`stateRgb` 是 24bit 状态（RLE 或稠密），没声明 `rgb24` 能力的旧页面收到旧字段 `state`（4bit） |
+| `init-game` | server → client | `{ config, stateRgb, stateEncoding, black, maxColorIndex, rgbSupport }`；`stateRgb` 是 24bit 状态（RLE 或稠密），声明了 `bin` 能力时是**二进制附件**（浏览器里收到 `ArrayBuffer`），否则是 base64 文本；没声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
 | `paint-square` | client → server | `{ index, brush }`（预设编号）或 `{ index, rgb }`（自定义 24bit）；与画笔同色则擦成黑色，否则涂成画笔色 |
 | `toggle-square` | client → server | `index` —— 最早的黑白切换协议，仍然接受 |
-| `update-square` | server → client | `{ index, value, rgb, isBlack }`；`rgb` 是自定义颜色的 24bit 值（否则 `null`），`value` / `isBlack` 是给未刷新旧页面的兼容字段 |
-| `online-users` | server → client | 当前在线人数 |
+| `update-square` | server → client | `{ index, value, rgb, isBlack }`；`rgb` 是自定义颜色的 24bit 值（否则 `null`），`value` / `isBlack` 是给未刷新旧页面的兼容字段。单格改动走这条 |
+| `update-squares` | server → client | `{ cells: [[index, value], ...] }`，一个广播窗口内的多条单格改动合并成一条；`value` 就是格子取值本身，只发给声明了 `batch` 的客户端 |
+| `paint-rejected` | server → client | `{ index }` —— 这次点击被令牌桶挡掉了，客户端据此把乐观风车收回去 |
+| `online-users` | server → client | 当前在线人数。**别用 `volatile`**：socket.io 在传输层正在写（例如刚发出的 CONNECT 应答）时会把 volatile 包直接丢掉，而这个人数只在连接 / 断开时各发一次，丢了就永远补不上（踩过这个坑） |
 | `update-region` | server → client | 开发者工具的批量改色广播，矩形 `{ start, runs, value, rgb, isBlack }`，闭合区域 `{ indices, runs: '', value, rgb, isBlack }` |
 
-握手能力：客户端用 `io({ auth: { caps: ['rgb24', 'rle'] } })` 声明自己认识哪些格式。
+握手能力：客户端用 `io({ auth: { caps: ['rgb24', 'rle', 'bin', 'batch'] } })` 声明自己认识哪些格式。
 
 | 能力 | 含义 |
 | --- | --- |
 | `rgb24` | 认识 24bit 取值与 3 字节/格 的稠密状态，服务端因此发 `stateRgb` 而不是旧字段 `state` |
 | `rle` | 额外认识 RLE 紧凑状态 |
+| `bin` | 状态用二进制发（`stateEncoding` 带 `-bin` 后缀），省掉 base64 的 33% 与客户端的 `atob` |
+| `batch` | 认识合并广播 `update-squares` |
 
 RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多少格, 颜色值]`，没被提到的格子保持黑色。
 空棋盘零字节，稀疏棋盘几十字节；只有「每个格子颜色都不同」的噪点棋盘会比稠密格式更大，
 这时 `encodeCompactState` 退回 3 字节/格的稠密格式，所以载荷永远不会比朴素编码更大。
 大消息另外交给 WebSocket 的 `perMessageDeflate`（engine.io `perMessageDeflate`，阈值 1 KiB）再压一遍。
+
+### 状态快照缓存与广播节奏
+
+- **快照缓存**：全盘编码（RLE / 稠密 / 4bit）按 `stateRev` 缓存，并且**按需**计算 ——
+  先只算 RLE，稠密格式的字节数是固定的（格子数 × 3），比长度就能决定用哪个，不用先编码出来。
+  以前每个新连接都要现算两套全盘编码，百万格的棋盘就是每连接好几 MB 的临时内存与几十万次 varint 写。
+- **广播合并**：单格改动先进 `pendingSquares`（`Map<index, value>`，同一格只留最后一次），
+  `BROADCAST_WINDOW_MS`（16 ms）后统一发出。窗口里只有一格就沿用 `update-square`（最常见，
+  老页面照旧）；多格时给 `batch` 客户端发一条 `update-squares`，给其它客户端逐格补发 `update-square`。
+- **令牌桶限流**：每个连接 `PAINT_BURST`（60）容量、`PAINT_PER_SECOND`（30）补充，
+  正常点击远远用不满；被挡掉时回 `paint-rejected`，客户端立刻收起乐观动画而不是等 8 秒超时。
+- `maxHttpBufferSize: 1e6` 显式写明上行单条消息上限；`stateRev` 同时是自动存档的脏标记。
 
 ## 开发者工具（`src/dev-api.ts`）
 
@@ -182,6 +230,11 @@ HTTP 端点：
 | `GET /api/dev/session` | – | `{ ok, enabled, active, config: { cols, rows } }` |
 | `POST /api/dev/paint` | `{ x0, y0, x1, y1, color }` 或 `{ cells: [], color }` | 应用改动并返回 `{ ok, changed, range }`；503 = 未启用，401 = token 失效 |
 
+`range` 是给客户端「本机先套用一遍，不等广播绕一圈」用的，所以矩形分支除了 `{ start, width, height, runs }`
+还会带上 `value` / `rgb` / `isBlack`（与广播同一套取值）—— 少了颜色字段，客户端就会用
+`applyRegionPayload` 的兜底色（1 号色）涂一遍。闭合区域分支的 `range` 只有 `{ runs: '', spread: true }`，
+本机套用是空操作，实际落地靠 `update-region` 广播（它带着 `indices`）。
+
 `color` 与单元格取值同一套约定：`0` 黑、`1..15` 预设编号、`>= 16` 为 24bit RGB。
 矩形坐标会被规范化（`min` / `max`），越界返回 400 `out-of-range`。
 
@@ -191,14 +244,21 @@ HTTP 端点：
 
 - 矩形：`update-region` 的 `{ start, runs }`，`runs` 与状态 RLE **同一套 varint 三元组**，
   但语义不同：这里不跳过黑色 —— 黑色在批量操作里是「擦除」这个有效结果，只有值真的没变的格子才被跳过。
+  服务端是**边改边收集**改动列表（行优先，天然按下标升序），再交给 `encodeChangedRuns(changes, start)` ——
+  不再像以前那样 `gridState.slice()` 复制整盘去和改后对拍（百万格棋盘每次操作省下 4 MB 拷贝）。
 - 闭合区域：`{ indices }`，每个下标套用同一个取值（`runs` 为空串）。
 
 **关键坑**：`runs` 里的第一个 varint 是「**相对上一段结束位置再跳过多少格**」，不是相对 `start` 的绝对偏移
-（绝对偏移只在第一段成立，见 `encodeDiffRuns` 里的 `cursor`）。
+（绝对偏移只在第一段成立，见 `encodeChangedRuns` 里跟着段尾走的 `cursor`）。
 编码端必须维护这个游标，否则从第二段起整片改动都会往后漂；
 广播里也**必须带上 `start`**，因为客户端把 `runs` 当成相对起点解析（`board.mjs` 的
 `applyRegionPayload` 里 `let index = Number(start) || 0`）—— 缺了 `start` 就会被当成 0，
 所有改动都落到棋盘左上角去。
+
+**第二个坑**：`runs` 是 base64 文本，客户端要先 `toBytes()` 转成字节数组再交给 `readVarint()` ——
+`readVarint` 是**按字节下标取值**的（二进制状态与它是同一个实现），直接传字符串会把字符当数字
+（`'A' & 0x7f` → NaN → 0），于是每个 varint 都读成 0，`run <= 0` 立刻 break，
+整片改动静默丢失（表现为"区域填充后画面不刷新"）。
 
 ## 客户端开发者模式交互（`devtools.mjs`）
 

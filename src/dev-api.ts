@@ -10,7 +10,7 @@
 
 import crypto from 'crypto';
 import type { Context, Hono } from 'hono';
-import { PRESET_MAX, RGB_MASK } from './state';
+import { BLACK, PRESET_MAX, RGB_MASK, isCustomValue, toLegacyIndex } from './state';
 
 /** 默认的 token 有效期（小时），可以用 game-config.json 的 devSessionHours 覆盖 */
 const DEFAULT_SESSION_HOURS = 8;
@@ -284,7 +284,12 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
                 start: startY * cols + startX,
                 width,
                 height,
-                runs: result.runs
+                runs: result.runs,
+                // 客户端拿到响应后会用 range 在本机直接套用一遍（不等广播绕一圈），
+                // 所以颜色字段必须带上，否则本机会被涂成 applyRegionPayload 的兜底色（1 号色）
+                value: toLegacyIndex(color),
+                rgb: isCustomValue(color) ? color : null,
+                isBlack: color === BLACK
             }
         });
     });

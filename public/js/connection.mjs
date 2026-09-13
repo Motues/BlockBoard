@@ -1,5 +1,6 @@
-// 与服务端的连接：处理 init-game / update-square / online-users，
-// 并绑定与画布无关的全局 UI 事件（设置面板、提示弹窗、Esc、点空白处关面板）。
+// 与服务端的连接：处理 init-game / update-square / update-squares / update-region /
+// paint-rejected / online-users，并绑定与画布无关的全局 UI 事件
+// （设置面板、提示弹窗、Esc、点空白处关面板）。
 
 import { SWITCH_DURATION, SWITCH_SETTLE } from './config.mjs';
 import { setBrushIndex } from './brush.mjs';
@@ -28,9 +29,10 @@ export function initConnection() {
     socket.on('init-game', (data) => {
         const { config, maxColorIndex, rgbSupport, stateRgb, state32 } = data;
         serverCaps.color = typeof maxColorIndex === 'number';
-        // 状态可能是 stateRgb（新服务端）或 state32（上一版服务端），都说明它支持自定义颜色
+        // 状态可能是 stateRgb（新服务端，base64 字符串或二进制附件）或 state32（上一版服务端），
+        // 都在说明它支持自定义颜色
         serverCaps.rgb = rgbSupport === true ||
-            typeof stateRgb === 'string' ||
+            (stateRgb !== undefined && stateRgb !== null) ||
             typeof state32 === 'string';
 
         // 老服务端存不了自定义颜色：禁用圆心，并把自定义画笔退回预设色
@@ -44,32 +46,26 @@ export function initConnection() {
 
     // 收到服务器广播：方块的颜色值确定
     socket.on('update-square', ({ index, value, isBlack, rgb }) => {
-        const gridState = getGridState();
+        applySquareUpdate(index, value, isBlack, rgb);
+    });
 
-        // rgb 是自定义 24bit 颜色；value / isBlack 用于新老服务端的兼容
-        const target = typeof rgb === 'number'
-            ? customValue(rgb)
-            : typeof value === 'number'
-                ? value
-                : (isBlack ? 0 : 1);
+    // 合并广播：一个 16ms 窗口内的多条单格改动。
+    // value 是 24bit 取值本身（0 = 黑，1..15 = 预设编号，>= 16 = 自定义色），
+    // 认识 rgb24 的客户端都认识它，所以不用再带兼容字段
+    socket.on('update-squares', ({ cells }) => {
+        if (!Array.isArray(cells)) return;
 
-        const now = performance.now();
-
-        // 响应到了，解除等待（风车不再"无限转"）
-        clearPending(index);
-
-        const anim = animations.get(index);
-        if (anim) {
-            // 自己点击时启动的动画：补上权威颜色，并留出收尾淡出的时间。
-            // 服务器慢的时候 end 早已过去，这里会顺势延长到"响应后再收尾"
-            anim.to = target;
-            anim.end = Math.max(anim.end, now + SWITCH_SETTLE);
-        } else if (gridState[index] !== target) {
-            // 别人切换的方块：自己也播一遍同样的风车动画
-            startSwitch(index, gridState[index], target, now, now + SWITCH_DURATION);
+        for (const entry of cells) {
+            if (!Array.isArray(entry)) continue;
+            applySquareUpdate(Number(entry[0]), entry[1], undefined, undefined);
         }
+    });
 
-        gridState[index] = target;
+    // 服务端把这次点击挡掉了（令牌桶满了）：把乐观动画收回去，
+    // 否则要等 PENDING_TIMEOUT（8 秒）才恢复
+    socket.on('paint-rejected', ({ index }) => {
+        clearPending(index);
+        animations.delete(index);
         requestRender();
     });
 
@@ -81,6 +77,39 @@ export function initConnection() {
     socket.on('update-region', (payload) => {
         applyRegionPayload(payload);
     });
+}
+
+// 落地一条单格改动（单格广播与合并广播共用）
+function applySquareUpdate(index, value, isBlack, rgb) {
+    const gridState = getGridState();
+    const cellIndex = Number(index);
+    if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= gridState.length) return;
+
+    // rgb 是自定义 24bit 颜色；value / isBlack 用于新老服务端的兼容
+    const target = typeof rgb === 'number'
+        ? customValue(rgb)
+        : typeof value === 'number'
+            ? value
+            : (isBlack ? 0 : 1);
+
+    const now = performance.now();
+
+    // 响应到了，解除等待（风车不再"无限转"）
+    clearPending(cellIndex);
+
+    const anim = animations.get(cellIndex);
+    if (anim) {
+        // 自己点击时启动的动画：补上权威颜色，并留出收尾淡出的时间。
+        // 服务器慢的时候 end 早已过去，这里会顺势延长到"响应后再收尾"
+        anim.to = target;
+        anim.end = Math.max(anim.end, now + SWITCH_SETTLE);
+    } else if (gridState[cellIndex] !== target) {
+        // 别人切换的方块：自己也播一遍同样的风车动画
+        startSwitch(cellIndex, gridState[cellIndex], target, now, now + SWITCH_DURATION);
+    }
+
+    gridState[cellIndex] = target;
+    requestRender();
 }
 
 // --- 界面事件（与画布交互无关的部分）---

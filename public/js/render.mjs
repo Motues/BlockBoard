@@ -1,8 +1,17 @@
 // 画布渲染：网格 + 方块、风车切换动画、导出用的离屏绘制。
 // 悬停高亮由 board.mjs 通过 shared 的渲染钩子挂进来。
+//
+// 屏幕上的画面分三层：
+//   1) 棋盘层（背景 + 网格 + 方块）—— 只在"状态或相机变了"时重画，
+//      结果存在离屏 canvas 里，其余帧直接 drawImage 一次（悬停/风车每帧都在动，
+//      但棋盘本身没动，这一层缓存能省掉每帧的整盘重画）
+//   2) 风车动画层（drawSwitches）
+//   3) 覆盖层（paintOverlays：悬停高亮、开发者选区）
+// 缓存是否可用由 shared 的 getBoardRevision() + 相机参数决定：requestRender() 会自增版本号，
+// 只有悬停变化时走 requestOverlayRender()（不动版本号），这一层才能被复用。
 
-import { COLORS, EXPORT_SCALE, SWITCH_SETTLE, SWITCH_SPIN_RATE } from './config.mjs';
-import { valueToColor } from './color.mjs';
+import { COLORS, EXPORT_SCALE, MIN_LINE_PITCH, SWITCH_SETTLE, SWITCH_SPIN_RATE } from './config.mjs';
+import { valueRgb, valueToColor } from './color.mjs';
 import { getGridState, isBoardReady } from './board.mjs';
 import { lineWidthFor, makeCamera } from './camera.mjs';
 import { closeOptionsPanel } from './ring.mjs';
@@ -12,6 +21,7 @@ import {
     canvas,
     clamp,
     ctx,
+    getBoardRevision,
     paintOverlays,
     pendingRequests,
     setRenderHooks
@@ -69,8 +79,12 @@ export function paintBoard(g, cam) {
     g.fillStyle = COLORS.gap;
     g.fillRect(left - lineW, top - lineW, right - left + lineW * 2, bottom - top + lineW * 2);
 
-    // 2) 再画方块。每格颜色可能不同，所以只在颜色变化时切换 fillStyle
-    let lastColor = null;
+    // 2) 再画方块。每格颜色可能不同，所以只在颜色变化时切换 fillStyle。
+    //    比较的是取值本身（数字），valueToColor 只在颜色真的换了时才调用 ——
+    //    自定义颜色的那条路径要拼字符串，逐格调用是渲染里最贵的一笔开销。
+    //    注意不能把相邻同色格并成一个 fillRect：格子之间那条缝隙（lineW）是网格线的
+    //    可见部分，合并会把网格线盖掉；缩得太小（连网格线都不画了）时由 paintBoardLod 接手
+    let lastValue = -1;
 
     for (let r = r0; r < r1; r++) {
         const y = ys[r - r0];
@@ -85,10 +99,10 @@ export function paintBoard(g, cam) {
             const w = xs[c - c0 + 1] - x - lineW;
             if (w <= 0) continue;
 
-            const color = valueToColor(gridState[index]);
-            if (color !== lastColor) {
-                g.fillStyle = color;
-                lastColor = color;
+            const cellValue = gridState[index];
+            if (cellValue !== lastValue) {
+                g.fillStyle = valueToColor(cellValue);
+                lastValue = cellValue;
             }
 
             g.fillRect(x, y, w, h);
@@ -96,26 +110,167 @@ export function paintBoard(g, cam) {
     }
 }
 
-// 每帧一画：背景 → 棋盘 → 各模块挂上来的叠加层（风车动画、悬停高亮）
-function drawFrame(now) {
-    if (!isBoardReady()) return;
+// --- 缩到很小的时候：1 像素/格 的位图 ---
+// 格子只有几个物理像素、连网格线都不画了的时候，逐格 fillRect 是纯浪费：
+// 把可见范围填进一张"1 像素/格"的小画布，再一次性放大贴上来（最近邻，格子边界依然清楚）。
+// 成本从 O(可见格数) 次 fillRect 降到 1 次 drawImage，且位图只在状态 / 可见范围变化时重建。
 
-    const cam = makeCamera();
+// ImageData 的字节顺序是 RGBA，用 Uint32 视图写的时候要看机器字节序
+const LOD_LITTLE_ENDIAN = (() => {
+    const probe = new Uint32Array([1]);
+    return new Uint8Array(probe.buffer)[0] === 1;
+})();
 
-    // 背景
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+const lod = {
+    canvas: null,
+    g: null,
+    image: null,
+    width: 0,
+    height: 0,
+    key: ''
+};
 
-    // 棋盘
-    paintBoard(ctx, {
+// 单元格取值 → ImageData 里的一格（0xAABBGGRR）
+function packCell(value) {
+    const rgb = valueRgb(value);
+    const r = (rgb >> 16) & 0xff;
+    const g = (rgb >> 8) & 0xff;
+    const b = rgb & 0xff;
+
+    return LOD_LITTLE_ENDIAN
+        ? ((0xff << 24) | (b << 16) | (g << 8) | r) >>> 0
+        : (((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0);
+}
+
+function lodImageData(width, height) {
+    if (!lod.image || lod.width < width || lod.height < height) {
+        // 取可见范围的上界做一次分配，之后平移只改变脏矩形，不再重新分配
+        lod.width = Math.max(width, lod.width);
+        lod.height = Math.max(height, lod.height);
+        lod.image = new ImageData(lod.width, lod.height);
+    }
+    return lod.image;
+}
+
+// 把可见范围的格子画成 1 像素/格 的位图并放大贴上来
+function paintBoardLod(g, cam) {
+    const pitchLocal = board.cellSize + board.gap;
+    const pitchPx = pitchLocal * cam.scale;
+    const view = { x0: 0, y0: 0, x1: canvas.width, y1: canvas.height };
+
+    // 可见格子范围（和 paintBoard 同一套算法，外扩一格）
+    const c0 = clamp(Math.floor((view.x0 - cam.ox) / pitchPx) - 1, 0, board.cols);
+    const c1 = clamp(Math.ceil((view.x1 - cam.ox) / pitchPx) + 1, 0, board.cols);
+    const r0 = clamp(Math.floor((view.y0 - cam.oy) / pitchPx) - 1, 0, board.rows);
+    const r1 = clamp(Math.ceil((view.y1 - cam.oy) / pitchPx) + 1, 0, board.rows);
+
+    const w = c1 - c0;
+    const h = r1 - r0;
+    if (w <= 0 || h <= 0) return;
+
+    // 整个棋盘先铺一层缝隙色当外框（这一层就是网格线颜色）
+    g.fillStyle = COLORS.gap;
+    g.fillRect(
+        cam.px(0),
+        cam.py(0),
+        Math.max(0, cam.px(board.width) - cam.px(0)),
+        Math.max(0, cam.py(board.height) - cam.py(0))
+    );
+
+    const key = `${getBoardRevision()}|${c0},${r0},${w}x${h}`;
+
+    if (lod.key !== key) {
+        // 先确定位图尺寸（必要时扩容），再保证 canvas 装得下
+        const image = lodImageData(w, h);
+
+        if (!lod.canvas) lod.canvas = document.createElement('canvas');
+        if (lod.canvas.width < lod.width || lod.canvas.height < lod.height) {
+            lod.canvas.width = lod.width;
+            lod.canvas.height = lod.height;
+        }
+
+        const lg = lod.g || (lod.g = lod.canvas.getContext('2d'));
+        const packed = new Uint32Array(image.data.buffer);
+        const gridState = getGridState();
+        const cols = board.cols;
+
+        for (let row = 0; row < h; row++) {
+            const srcRow = (r0 + row) * cols + c0;
+            const dstRow = row * lod.width;
+
+            for (let col = 0; col < w; col++) {
+                packed[dstRow + col] = packCell(gridState[srcRow + col]);
+            }
+        }
+
+        lg.putImageData(image, 0, 0, 0, 0, w, h);
+        lod.key = key;
+    }
+
+    // 最近邻放大：格子边界保持清晰，不糊
+    g.imageSmoothingEnabled = false;
+    g.drawImage(
+        lod.canvas,
+        0, 0, w, h,
+        cam.px(board.padding + c0 * pitchLocal),
+        cam.py(board.padding + r0 * pitchLocal),
+        Math.max(1, cam.px(board.padding + c1 * pitchLocal) - cam.px(board.padding + c0 * pitchLocal)),
+        Math.max(1, cam.py(board.padding + r1 * pitchLocal) - cam.py(board.padding + r0 * pitchLocal))
+    );
+    g.imageSmoothingEnabled = true;
+}
+
+// 棋盘层（背景 + 棋盘）画进离屏 canvas
+function paintBoardLayer(g, cam) {
+    g.fillStyle = COLORS.bg;
+    g.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 格子小到画不出网格线时走位图路径
+    const pitchPx = (board.cellSize + board.gap) * cam.scale;
+    if (pitchPx < MIN_LINE_PITCH) {
+        paintBoardLod(g, cam);
+        return;
+    }
+
+    paintBoard(g, {
         scale: cam.scale,
         ox: cam.ox,
         oy: cam.oy,
         lineW: cam.lineW,
         view: { x0: 0, y0: 0, x1: canvas.width, y1: canvas.height },
+        // 正在播放风车动画的格子由 drawSwitches 单独画，这里跳过
         skip: animations.size > 0 ? animations : null
     });
+}
 
+// 棋盘层的缓存：键 = 相机参数（缩放 / 平移 / 线宽 / 画布尺寸）+ 棋盘版本号
+const boardLayer = { canvas: null, g: null, key: '' };
+
+function drawBoardLayer(cam) {
+    const key = `${cam.scale}|${cam.ox}|${cam.oy}|${cam.lineW}|${canvas.width}x${canvas.height}|${getBoardRevision()}`;
+
+    if (boardLayer.key !== key) {
+        if (!boardLayer.canvas) boardLayer.canvas = document.createElement('canvas');
+        if (boardLayer.canvas.width !== canvas.width || boardLayer.canvas.height !== canvas.height) {
+            boardLayer.canvas.width = canvas.width;
+            boardLayer.canvas.height = canvas.height;
+        }
+
+        const g = boardLayer.g || (boardLayer.g = boardLayer.canvas.getContext('2d'));
+        paintBoardLayer(g, cam);
+        boardLayer.key = key;
+    }
+
+    ctx.drawImage(boardLayer.canvas, 0, 0);
+}
+
+// 每帧一画：棋盘层（有缓存就 blit）→ 风车动画 → 各模块挂上来的覆盖层
+function drawFrame(now) {
+    if (!isBoardReady()) return;
+
+    const cam = makeCamera();
+
+    drawBoardLayer(cam);
     drawSwitches(now, cam);
     paintOverlays(now, cam);
 }

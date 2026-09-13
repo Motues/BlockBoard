@@ -120,9 +120,24 @@ BRUSH_PRESETS.forEach((preset, i) => {
     VALUE_RGB[i + 1] = rgb === null ? 0xffffff : rgb;
 });
 
-// 颜色值 → CSS 颜色；自定义颜色当场换算成 #rrggbb
+// 颜色值 → CSS 颜色；自定义颜色当场换算成 #rrggbb。
+// 自定义颜色会逐帧被问到（渲染整个棋盘），换算结果缓存起来，别再每格拼一次字符串；
+// 颜色种类理论上可以很多，加个上限，超了直接清空重来
+const CUSTOM_COLOR_CACHE = new Map();
+const CUSTOM_COLOR_CACHE_MAX = 4096;
+
 export function valueToColor(value) {
-    if (isCustomValue(value)) return rgbToHex(value);
+    if (isCustomValue(value)) {
+        const cached = CUSTOM_COLOR_CACHE.get(value);
+        if (cached !== undefined) return cached;
+
+        const hex = rgbToHex(value);
+        if (CUSTOM_COLOR_CACHE.size >= CUSTOM_COLOR_CACHE_MAX) CUSTOM_COLOR_CACHE.clear();
+        CUSTOM_COLOR_CACHE.set(value, hex);
+
+        return hex;
+    }
+
     return VALUE_COLORS[value] || COLORS.white;
 }
 

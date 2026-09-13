@@ -1,5 +1,14 @@
 // src/state.ts
 // 棋盘状态的编码 / 解码，以及每格取值的约定。
+// 编码共四种形态，都从同一份 Uint32Array 出发：
+//   · 24bit 稠密（3 字节/格）—— encodeStateBuffer / encodeState
+//   · 4bit 稠密（每字节两格）—— encodeLegacyStateBuffer / encodeLegacyState
+//   · RLE（varint 三元组）—— encodeRleBuffer / encodeRle
+//   · 批量差量 runs —— encodeChangedRuns
+// Buffer 版给二进制下发和压缩存档用，字符串版是它们的 base64 包装（旧协议仍然在发 base64）。
+//
+// 存档格式见 buildSaveFile / parseSaveFile：带 magic + 版本 + 尺寸的文件头，
+// 载荷是上面某种编码再 deflate 一遍，彻底摆脱"按字节长度猜格式"。
 //
 // 每格是一个 24bit 值（存在 Uint32Array 里，只用低 24 位）：
 //   0x000000           = 黑色（默认底色）
@@ -9,6 +18,8 @@
 // 预设编号占了 0x00..0x0F 这 16 个码位，所以自定义颜色必须避开它们。
 // 落到这一段的就是 #000000..#00000F，肉眼看都是纯黑：存的时候抬到 0x000010，
 // 读出来是 #000010，分辨不出差别。
+
+import zlib from 'zlib';
 
 export const BLACK = 0;
 /** 4bit 能表达的最大编号，也是预设色编号的上限 */
@@ -50,8 +61,9 @@ export function hasCustomColors(state: Uint32Array): boolean {
     return false;
 }
 
-// 打包成 Base64：每格 3 字节（小端）
-export function encodeState(state: Uint32Array): string {
+// 打包成 Buffer：每格 3 字节（小端）。
+// 二进制下发（caps 里的 bin）和压缩存档都用它，省掉 base64 的 33% 膨胀
+export function encodeStateBuffer(state: Uint32Array): Buffer {
     const buffer = Buffer.alloc(state.length * CELL_BYTES);
 
     for (let i = 0; i < state.length; i++) {
@@ -63,12 +75,17 @@ export function encodeState(state: Uint32Array): string {
         buffer[offset + 2] = (value >> 16) & 0xff;
     }
 
-    return buffer.toString('base64');
+    return buffer;
 }
 
-// 打包成旧版 4bit/格 的 Base64：每字节两格，低 4 位放前一个格子。
+/** 打包成 Base64（旧协议 / 老页面用） */
+export function encodeState(state: Uint32Array): string {
+    return encodeStateBuffer(state).toString('base64');
+}
+
+// 打包成旧版 4bit/格：每字节两格，低 4 位放前一个格子。
 // 自定义颜色旧格式装不下，退化成 15 号色（老页面会把它显示成 15 号预设色）
-export function encodeLegacyState(state: Uint32Array): string {
+export function encodeLegacyStateBuffer(state: Uint32Array): Buffer {
     const buffer = Buffer.alloc(Math.ceil(state.length / 2));
 
     for (let i = 0; i < state.length; i++) {
@@ -78,7 +95,12 @@ export function encodeLegacyState(state: Uint32Array): string {
         buffer[byteIndex] |= (i & 1) ? (value << 4) : value;
     }
 
-    return buffer.toString('base64');
+    return buffer;
+}
+
+/** 打包成旧版 4bit/格 的 Base64 */
+export function encodeLegacyState(state: Uint32Array): string {
+    return encodeLegacyStateBuffer(state).toString('base64');
 }
 
 // --- 紧凑状态（RLE，下发给新客户端用）---
@@ -125,7 +147,7 @@ export function readVarint(buffer: Buffer, cursor: { pos: number }): number {
     return value;
 }
 
-export function encodeRle(state: Uint32Array): string {
+export function encodeRleBuffer(state: Uint32Array): Buffer {
     // 最坏情况是每个格子一个色块、每个 varint 最多 4 字节，这里按格子数上界分配一次就够
     const writer = createVarintWriter(state.length * 12 + 12);
     let cursor = 0; // 上一个色块的结束位置：它之前（和之后）的黑格都不用写出来
@@ -150,39 +172,52 @@ export function encodeRle(state: Uint32Array): string {
         index = end;
     }
 
-    return writer.buffer.subarray(0, writer.pos).toString('base64');
+    // 注意返回的是 subarray：二进制下发时 socket.io 会按 byteOffset/length 正确处理
+    return writer.buffer.subarray(0, writer.pos);
 }
 
-// 批量改色用：把 [startIndex, endIndex) 里"值确实变了"的格子按
-// [跳过多少格, 连续多少格, 颜色值] 打包成 RLE（没提到的格子保持原样）。
-// 与 encodeRle 的区别：这里不跳过黑色 —— 黑色在批量操作里是"擦除"这个有效结果。
-// 返回空字符串表示这一片没有任何改动
-export function encodeDiffRuns(before: Uint32Array, after: Uint32Array, start: number, end: number): string {
-    const count = end - start;
-    if (count <= 0) return '';
+export function encodeRle(state: Uint32Array): string {
+    return encodeRleBuffer(state).toString('base64');
+}
 
-    const writer = createVarintWriter(count * 12 + 12);
-    let index = start;
-    // "跳过多少格"是相对**上一段改动结束的位置**，不是相对区间起点（起点只在第一段成立）。
-    // 所以游标要跟着已经写出去的段走，否则第二段开始整片改动都会往后漂
+/** 一次批量改色里"真的变了"的一格 */
+export interface CellChange {
+    index: number;
+    value: number;
+}
+
+/**
+ * 批量改色用：把 changes 里"值确实变了"的格子按 [跳过多少格, 连续多少格, 颜色值] 打包成 RLE。
+ * 与 encodeRle 的区别：这里不跳过黑色 —— 黑色在批量操作里是"擦除"这个有效结果。
+ * 返回空字符串表示这一片没有任何改动。
+ *
+ * changes 必须是**按下标升序**的（paintRect 按行优先遍历，天然满足），
+ * 这样不用再整盘复制一份 before 去和 after 对拍（1M 格的棋盘省下 4MB 拷贝）。
+ * 游标语义与原实现一致：第一个 varint 相对基准点 start，之后相对上一段改动的结束位置。
+ */
+export function encodeChangedRuns(changes: CellChange[], start: number): string {
+    if (changes.length === 0) return '';
+
+    const writer = createVarintWriter(changes.length * 12 + 12);
     let cursor = start;
+    let i = 0;
 
-    while (index < end) {
-        if (before[index] === after[index]) {
-            index++;
-            continue;
+    while (i < changes.length) {
+        const value = changes[i].value;
+        let j = i + 1;
+        // 下标连续且颜色相同的改动可以并成一段
+        while (j < changes.length &&
+            changes[j].index === changes[j - 1].index + 1 &&
+            changes[j].value === value) {
+            j++;
         }
 
-        let runEnd = index + 1;
-        const value = after[index];
-        while (runEnd < end && before[runEnd] !== after[runEnd] && after[runEnd] === value) runEnd++;
-
-        writeVarint(writer, index - cursor);
-        writeVarint(writer, runEnd - index);
+        writeVarint(writer, changes[i].index - cursor);
+        writeVarint(writer, j - i);
         writeVarint(writer, value);
 
-        cursor = runEnd;
-        index = runEnd;
+        cursor = changes[j - 1].index + 1;
+        i = j;
     }
 
     return writer.buffer.subarray(0, writer.pos).toString('base64');
@@ -215,6 +250,57 @@ export function decodeRle(encoded: string, total: number): Uint32Array {
 export interface SourceDims {
     cols: number;
     rows: number;
+}
+
+// --- 存档文件（带版本号 + deflate）---
+// 布局：'BBS2' + 1 字节 flags + uint32LE cols + uint32LE rows + deflate(载荷)
+//   载荷是 24bit 稠密（flags 位 0 置位）或 4bit 稠密（不置位）的**裸字节**，不含 base64。
+// 老存档（整个文件是 base64 文本）没有这个头，读取时按字节长度猜格式的老逻辑继续兜底 ——
+// 新格式带 magic 和尺寸，再也不用猜，也不会因为改了棋盘尺寸就读出斜掉的图案。
+
+export const SAVE_MAGIC = 'BBS2';
+/** 'BBS2' + flags + cols + rows */
+export const SAVE_HEADER_BYTES = 13;
+/** flags 位 0：载荷是 24bit/格（否则 4bit/格） */
+export const SAVE_FLAG_RGB24 = 1;
+
+export interface SaveFile {
+    /** 24bit/格 时含 SAVE_FLAG_RGB24 */
+    flags: number;
+    cols: number;
+    rows: number;
+    /** 解压后的裸状态字节 */
+    payload: Buffer;
+}
+
+/** 把当前棋盘打包成存档文件（头部 + deflate 载荷） */
+export function buildSaveFile(state: Uint32Array, cols: number, rows: number): Buffer {
+    const customColors = hasCustomColors(state);
+    const raw = customColors ? encodeStateBuffer(state) : encodeLegacyStateBuffer(state);
+
+    const header = Buffer.alloc(SAVE_HEADER_BYTES);
+    header.write(SAVE_MAGIC, 0, 'ascii');
+    header[4] = customColors ? SAVE_FLAG_RGB24 : 0;
+    header.writeUInt32LE(cols, 5);
+    header.writeUInt32LE(rows, 9);
+
+    return Buffer.concat([header, zlib.deflateSync(raw, { level: 6 })]);
+}
+
+/**
+ * 解析新格式存档。不是新格式（老存档 / 文件损坏）返回 null，
+ * 由调用方回落到"按字节长度猜格式"的旧路径。
+ */
+export function parseSaveFile(file: Buffer): SaveFile | null {
+    if (file.length <= SAVE_HEADER_BYTES) return null;
+    if (file.subarray(0, SAVE_MAGIC.length).toString('ascii') !== SAVE_MAGIC) return null;
+
+    const flags = file[4];
+    const cols = file.readUInt32LE(5);
+    const rows = file.readUInt32LE(9);
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) return null;
+
+    return { flags, cols, rows, payload: zlib.inflateSync(file.subarray(SAVE_HEADER_BYTES)) };
 }
 
 export interface DecodeResult {
