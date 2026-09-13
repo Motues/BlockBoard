@@ -17,18 +17,27 @@
         <div><span data-i18n="common.madeBy">Made by</span> <a href="https://www.motues.top" target="_blank">Motues</a></div>
     </div>
 
-    <!-- 提示弹窗 -->
+    <!-- 提示弹窗：触屏和桌面端的操作完全不同，两份文案只显示当前设备那一份
+         （showHintPopup 会按设备给弹窗加上 touch 类） -->
     <div id="hint-popup" class="glass-panel hint-popup">
         <div class="hint-content">
-            <div class="hint-text-en">
+            <div class="hint-text-desktop">
                 <ul>
-                    <li data-i18n="hint.swipe">You can swipe the page to create</li>
-                    <li data-i18n="hint.paint">Click a block to paint, click it again to erase</li>
-                    <li data-i18n="hint.zoom">Scroll or pinch to zoom the board</li>
+                    <li data-i18n="hint.click">Click a block to paint, click it again to erase</li>
+                    <li data-i18n="hint.zoom">Scroll to zoom the board</li>
                     <li data-i18n="hint.brush">Short press the right button to pick a brush color</li>
                     <li data-i18n="hint.pan">Hold and drag the right button to move the board</li>
                     <li data-i18n="hint.rgb">Click the rainbow circle for any RGB color</li>
                     <li data-i18n="hint.eyedropper">Use the eyedropper in the palette to copy a block color</li>
+                </ul>
+            </div>
+            <div class="hint-text-touch">
+                <ul>
+                    <li data-i18n="hint.tap">Tap a block to paint, tap it again to erase</li>
+                    <li data-i18n="hint.longPress">Long press a block to pick a brush color</li>
+                    <li data-i18n="hint.drag">Drag with one finger to move the board</li>
+                    <li data-i18n="hint.pinch">Pinch with two fingers to zoom</li>
+                    <li data-i18n="hint.menu">The button at the bottom right has reset view and save as image</li>
                 </ul>
             </div>
         </div>

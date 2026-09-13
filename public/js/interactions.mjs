@@ -7,6 +7,8 @@ import {
     RIGHT_DRAG_SLOP,
     RIGHT_LONGPRESS_MS,
     SWITCH_DURATION,
+    TOUCH_DRAG_SLOP,
+    TOUCH_LONGPRESS_MS,
     ZOOM_CONFIG
 } from './config.mjs';
 import {
@@ -34,6 +36,7 @@ import {
     canvas,
     clamp,
     clearPending,
+    consumeRingJustClosed,
     emitDevEvent,
     getPoint,
     hoverSupported,
@@ -57,6 +60,17 @@ let rightPress = null;
 let rightPanning = false;            // 这一次右键是否已经变成拖动
 let suppressNextContextMenu = false; // 这次右键已经变成拖动，松开时的 contextmenu 要吞掉
 
+// 触屏手势：一次按下 -> 抬起之间的状态
+//   timer   长按计时器，到点呼出画笔圆环
+//   moved   已经超过拖动容差，这次手势是平移而不是轻点
+//   long    长按已经生效，这次手势不再涂色
+let touchGesture = null;
+let suppressTouchContextMenu = false; // 长按已经处理过了，吞掉随之而来的浏览器菜单
+// 等待 click 事件裁决的那次触屏按下（触屏上 click 在 touchend 之后才来）
+let touchTap = null;
+// 这次按下开始时的操作模式：click 事件上读 isDevMode() / isPickMode() 会读到松开后的状态
+let pointerPhase = 'paint';
+
 // 双指缩放状态（触摸屏）；同时写回 shared，方便其它模块读取
 let pinch = null;
 function updatePinchState(value) {
@@ -78,29 +92,9 @@ function onHoverMove(e) {
 }
 
 // --- 点击方块 ---
-function onCanvasClick(e) {
-    // 点在 UI 面板 / 画笔圆环上时不触发方块
-    if (e.target.closest('.glass-panel, #brush-ring')) return;
-
-    // 开发者模式：左键交给 devtools（长按框选 / 短按弹方块菜单），不再直接上色
-    if (isDevMode()) return;
-
-    // 取色模式：点哪个方块就取哪个方块的颜色（拖动过视图不算）
-    if (isPickMode()) {
-        if (viewState.hasMoved) return;
-
-        const index = hitTest(e.clientX, e.clientY);
-        if (index < 0) return;
-
-        markPickJustHandled();
-        pickCellAt(index);
-        return;
-    }
-
-    if (viewState.hasMoved) return;
-
-    const index = hitTest(e.clientX, e.clientY);
-    if (index < 0 || pendingRequests.has(index)) return;
+// 涂色 / 擦除：客户端先按本地预测播风车动画，不等服务器，回包后再纠正
+function paintCell(index) {
+    if (pendingRequests.has(index)) return;
 
     // 老服务端存不了自定义颜色，点了也不会生效
     if (isCustomBrush() && !serverCaps.rgb) return;
@@ -122,7 +116,6 @@ function onCanvasClick(e) {
         payload = { index: index, brush: brushIndex };
     }
 
-    // 立刻开始风车动画，不等服务器；颜色先按本地预测，回包后再纠正
     startSwitch(index, current, target, now, now + SWITCH_DURATION);
 
     pendingRequests.add(index);
@@ -137,6 +130,47 @@ function onCanvasClick(e) {
 
     socket.emit(serverCaps.color ? 'paint-square' : 'toggle-square',
         serverCaps.color ? payload : index);
+}
+
+function onCanvasClick(e) {
+    // 点在 UI 面板 / 画笔圆环上时不触发方块
+    if (e.target.closest('.glass-panel, #brush-ring')) return;
+
+    // 这一下只是用来收起圆环的（触屏上圆环是模态的）：不涂色
+    if (consumeRingJustClosed()) return;
+
+    // 触屏：这次轻点是否成立由 touchend 判定（拖动过视图就不算）
+    const tap = touchTap;
+    touchTap = null;
+
+    if (tap) {
+        if (!tap.tap) return;
+
+        pointerPhase = tap.phase;
+        // 触屏上的"移动过"由手势自己判定（拖动时浏览器本来也不发 click）
+        viewState.hasMoved = false;
+    }
+
+    if (pointerPhase === 'dev') return;
+
+    // 取色模式：点哪个方块就取哪个方块的颜色（拖动过视图不算）
+    if (pointerPhase === 'pick') {
+        if (viewState.hasMoved) return;
+
+        const index = hitTest(e.clientX, e.clientY);
+        if (index < 0) return;
+
+        markPickJustHandled();
+        pickCellAt(index);
+        return;
+    }
+
+    if (viewState.hasMoved) return;
+
+    const index = hitTest(e.clientX, e.clientY);
+    if (index < 0) return;
+
+    paintCell(index);
 }
 
 // 取色：把方块颜色设为画笔颜色，然后退出取色模式
@@ -171,15 +205,21 @@ function onPointerDown(e) {
         return;
     }
 
+    const isTouch = e.type !== 'mousedown';
+
+    // 记下按下的这一刻处于什么模式：click 事件里读到的可能是"松开之后"的状态
+    // （取色成功后立刻退出取色模式，就会被误判成普通涂色）
+    pointerPhase = isDevMode() ? 'dev' : (isPickMode() ? 'pick' : 'paint');
+
     // 开发者模式：左键长按框选 / 短按打开方块菜单（转发给 devtools.mjs）
-    if (isDevMode() && e.type === 'mousedown' && e.button === 0) {
+    if (pointerPhase === 'dev' && !isTouch && e.button === 0) {
         e.preventDefault();
         emitDevEvent('leftdown', { event: e, col: hitColumn(e), row: hitRow(e) });
         return;
     }
 
     // 桌面端右键：按下时先按兵不动，等它表明是"长按/拖动"还是"短按"
-    if (e.type === 'mousedown' && e.button === RIGHT_BUTTON) {
+    if (!isTouch && e.button === RIGHT_BUTTON) {
         e.preventDefault();
 
         // 圆环开着的时候拖页面，圆环会留在原地，先收起
@@ -197,20 +237,75 @@ function onPointerDown(e) {
         return;
     }
 
-    if (e.type === 'mousedown' && e.button !== 0) return;
+    if (!isTouch && e.button !== 0) return;
 
-    // 触屏单指平移：鼠标左键不再拖动视图
-    if (e.type === 'mousedown') return;
+    // 鼠标左键不再拖动视图；下面的分支都是触屏单指
+    if (!isTouch) return;
 
+    const point = getPoint(e);
+
+    // 触屏：先按"可能是轻点"处理，随时可以升级成平移或长按选色
     viewState.panning = true;
     viewState.hasMoved = false;
 
-    const point = getPoint(e);
+    // 圆环开着时按在圆环外：先收起（不吞这次点击 —— 抬手时 click 会正常落在方块上）
+    if (!e.target.closest('#brush-ring')) closeBrushRing();
+
     viewState.startX = point.x - viewState.translateX;
     viewState.startY = point.y - viewState.translateY;
 
     viewState.clickStartX = point.x;
     viewState.clickStartY = point.y;
+
+    // 开发者模式下长按/框选由 devtools 负责，不在这里抢
+    if (pointerPhase !== 'dev') {
+        endTouchGesture();
+        beginTouchGesture(point, e.target === canvas);
+    }
+}
+
+// 长按计时到点：呼出画笔圆环，并取消这次手势的涂色与平移
+function onTouchLongPress() {
+    if (!touchGesture) return;
+
+    const { x, y } = touchGesture;
+    const tap = touchTap;
+    touchTap = null;
+    // 抬手后浏览器还会补一次 click，和 contextmenu 一样要作废
+    if (tap) tap.tap = false;
+
+    touchGesture.long = true;
+
+    viewState.panning = false;
+    viewState.hasMoved = true;
+
+    // 长按已经接管了这次手势。这个标记只能由"下一次触摸"或 onContextMenu 清掉：
+    // 浏览器补发的 contextmenu 在 touchend **之后**才到，抬手时就清会来不及拦
+    suppressTouchContextMenu = true;
+
+    // 让出主线程后再弹圆环，避免长按刚好卡在掉帧上
+    setTimeout(() => openBrushRing(x, y), 0);
+}
+
+function beginTouchGesture(point, onBoard) {
+    // 上一次长按留下的 contextmenu 标记不该影响新手势
+    suppressTouchContextMenu = false;
+
+    touchTap = { tap: true, phase: pointerPhase };
+    touchGesture = { x: point.x, y: point.y, long: false };
+
+    if (!onBoard) return;
+
+    touchGesture.timer = setTimeout(onTouchLongPress, TOUCH_LONGPRESS_MS);
+}
+
+function endTouchGesture() {
+    if (touchGesture) {
+        clearTimeout(touchGesture.timer);
+        touchGesture = null;
+    }
+
+    if (touchTap) touchTap.tap = false;
 }
 
 // 命中的方块坐标（开发者模式用；未命中返回 -1）
@@ -271,6 +366,19 @@ function onPointerMove(e) {
         emitDevEvent('leftmove', { event: e, col: hitColumn(e), row: hitRow(e) });
     }
 
+    // 触屏：手指一移动就说明这不是长按，取消计时；
+    // 超过容差后这次手势按平移处理，抬手时不再当作轻点
+    if (touchGesture && e.type === 'touchmove') {
+        const moved = Math.hypot(e.touches[0].clientX - touchGesture.x, e.touches[0].clientY - touchGesture.y);
+
+        if (!touchGesture.long && touchGesture.timer) {
+            clearTimeout(touchGesture.timer);
+            touchGesture.timer = null;
+        }
+
+        if (moved > TOUCH_DRAG_SLOP && touchTap) touchTap.tap = false;
+    }
+
     if (!viewState.panning) {
         // 未拖动时更新悬停高亮（移到面板上则收起）
         onHoverMove(e);
@@ -322,6 +430,13 @@ function onPointerUp(e) {
 }
 
 function onContextMenu(e) {
+    // 触屏长按已经处理过了（呼出圆环）：吞掉浏览器紧接着补发的菜单
+    if (suppressTouchContextMenu) {
+        suppressTouchContextMenu = false;
+        e.preventDefault();
+        return;
+    }
+
     // 这一次右键已经变成拖动棋盘了：吞掉浏览器菜单，也不弹圆环
     if (suppressNextContextMenu) {
         suppressNextContextMenu = false;
@@ -398,6 +513,8 @@ function resumePanWithTouch(e) {
 function onTouchStart(e) {
     if (e.touches.length >= 2) {
         e.preventDefault();
+        // 双指了：刚才那次单指手势作废（不涂色、不长按）
+        endTouchGesture();
         startPinch(e);
         return;
     }
@@ -408,6 +525,8 @@ function onTouchStart(e) {
 function onTouchMove(e) {
     if (e.touches.length >= 2) {
         e.preventDefault();
+        endTouchGesture();
+
         if (!pinch) startPinch(e);
 
         const centerX = viewport.w / 2;
@@ -446,11 +565,20 @@ function onTouchEnd(e) {
 
     if (e.touches.length === 1) {
         // 抬起一根手指后，用剩下这根手指继续平移，避免视图跳变
+        endTouchGesture();
         resumePanWithTouch(e);
         return;
     }
 
     updatePinchState(null);
+
+    // 长按计时还没到点就抬手：这次是轻点，交给随后的 click 决定要不要涂色
+    // （suppressTouchContextMenu 不在这里清 —— 浏览器补发的 contextmenu 还在后面）
+    if (touchGesture) {
+        clearTimeout(touchGesture.timer);
+        touchGesture = null;
+    }
+
     onPointerUp();
 }
 

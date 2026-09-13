@@ -16,6 +16,7 @@ import {
     clamp,
     menuButton,
     optionsPanel,
+    touchDevice,
     viewport
 } from './shared.mjs';
 
@@ -159,6 +160,8 @@ export function closeOptionsPanel() {
 export function showHintPopup() {
     const hintPopup = document.getElementById('hint-popup');
 
+    // 触屏和桌面端的操作完全不同，文案分两份，只显示当前设备那一份
+    hintPopup.classList.toggle('touch', touchDevice);
     hintPopup.classList.remove('hidden');
 
     // 10 秒后自动隐藏

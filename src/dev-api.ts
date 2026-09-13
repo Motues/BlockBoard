@@ -1,55 +1,53 @@
-// 开发者工具的服务端部分：密码换 token、token 校验，以及批量改色接口。
+// 开发者工具的服务端部分：密码换 token、token 校验、批量改色接口。
 //
-// 认证设计：
-//   · 密码从环境变量 DEV_PASSWORD 读，其次读 game-config.json 的 devPassword；
-//     两者都没有时开发者工具整个关闭（登录接口返回「未启用」）
-//   · 校验通过后下发一个随机 token，只存在内存里，默认 8 小时过期
-//   · 之后每个请求带 x-dev-token 头（也接受 Authorization: Bearer）
-//   · 退出登录会立刻作废 token；服务重启后所有 token 失效
-//   · 密码比对用 timingSafeEqual，并按 IP 限制失败次数，避免被暴力猜
+// 认证：密码优先取环境变量 DEV_PASSWORD，其次 game-config.json 的 devPassword，
+// 两者都没有就整个关闭；校验通过下发一个内存里的随机 token（默认 8 小时过期），
+// 之后请求带 x-dev-token（或 Authorization: Bearer）。密码比对用 timingSafeEqual，
+// 并按 IP 限制失败次数。
 
 import crypto from 'crypto';
 import type { Context, Hono } from 'hono';
+import { gameConfig } from './board-config';
 import { BLACK, PRESET_MAX, RGB_MASK, isCustomValue, toLegacyIndex } from './state';
 
-/** 默认的 token 有效期（小时），可以用 game-config.json 的 devSessionHours 覆盖 */
+/** token 有效期（小时），可用 game-config.json 的 devSessionHours 覆盖 */
 const DEFAULT_SESSION_HOURS = 8;
 /** 同一个 IP 连续失败多少次后暂时锁定 */
 const MAX_FAILURES = 5;
-/** 锁定时长(ms) */
 const LOCKOUT_MS = 5 * 60 * 1000;
 /** 单次批量操作的格子上限，防止一个请求把整块棋盘刷掉 */
 const MAX_REGION_CELLS = 200000;
 
 export interface DevPaintResult {
-    changed: number;
-    /** 变化格子的 RLE（[跳过多少格, 连续多少格, 颜色值]），空串表示没有变化 */
-    runs: string;
+  changed: number;
+  /** 变化格子的 RLE（[跳过多少格, 连续多少格, 颜色值]），空串表示没有变化 */
+  runs: string;
 }
 
 export interface DevApiOptions {
-    password: string;
-    sessionHours: number;
-    cols: number;
-    rows: number;
-    /** 把矩形区域涂成某个取值 */
-    paintRect: (x: number, y: number, width: number, height: number, color: number) => DevPaintResult;
-    /** 把一组散落的格子（闭合区域填充）涂成某个取值 */
-    paintCells: (cells: number[], color: number) => DevPaintResult;
+  password: string;
+  sessionHours: number;
+  cols: number;
+  rows: number;
+  /** 把矩形区域涂成某个取值 */
+  paintRect: (x: number, y: number, width: number, height: number, color: number) => DevPaintResult;
+  /** 把一组散落的格子（闭合区域填充）涂成某个取值 */
+  paintCells: (cells: number[], color: number) => DevPaintResult;
 }
 
 export interface DevAuthInfo {
-    enabled: boolean;
+  enabled: boolean;
 }
 
-export function resolveDevPassword(configPassword: unknown): { password: string; source: 'env' | 'config' | 'none' } {
-    const fromEnv = typeof process.env.DEV_PASSWORD === 'string' ? process.env.DEV_PASSWORD.trim() : '';
-    if (fromEnv.length > 0) return { password: fromEnv, source: 'env' };
+/** 密码来源：环境变量优先，其次 game-config.json */
+export function resolveDevPassword(): { password: string; source: 'env' | 'config' | 'none' } {
+  const fromEnv = typeof process.env.DEV_PASSWORD === 'string' ? process.env.DEV_PASSWORD.trim() : '';
+  if (fromEnv.length > 0) return { password: fromEnv, source: 'env' };
 
-    const fromConfig = typeof configPassword === 'string' ? configPassword.trim() : '';
-    if (fromConfig.length > 0) return { password: fromConfig, source: 'config' };
+  const fromConfig = typeof gameConfig.devPassword === 'string' ? gameConfig.devPassword.trim() : '';
+  if (fromConfig.length > 0) return { password: fromConfig, source: 'config' };
 
-    return { password: '', source: 'none' };
+  return { password: '', source: 'none' };
 }
 
 export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {

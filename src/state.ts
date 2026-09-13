@@ -252,15 +252,23 @@ export interface SourceDims {
     rows: number;
 }
 
-// --- 存档文件（带版本号 + deflate）---
-// 布局：'BBS2' + 1 字节 flags + uint32LE cols + uint32LE rows + deflate(载荷)
+// --- 存档文件（带版本号 + 尺寸 + 同步版本 + deflate）---
+// v3 布局：'BBS3' + 1 字节 flags + uint32LE cols + uint32LE rows + uint32LE epoch + uint32LE rev
+//          + deflate(载荷)                                            —— 共 21 字节头
+// v2 布局：'BBS2' + flags + cols + rows + deflate(载荷)               —— 共 13 字节头（没有 epoch / rev）
 //   载荷是 24bit 稠密（flags 位 0 置位）或 4bit 稠密（不置位）的**裸字节**，不含 base64。
 // 老存档（整个文件是 base64 文本）没有这个头，读取时按字节长度猜格式的老逻辑继续兜底 ——
 // 新格式带 magic 和尺寸，再也不用猜，也不会因为改了棋盘尺寸就读出斜掉的图案。
+//
+// epoch + rev 是给增量同步用的：服务端重启后沿用存档里的 epoch / rev，
+// 客户端拿着同样的版本号回来时就能直接"什么都不用传"；换了棋盘尺寸（epoch 变）就必须全量。
 
-export const SAVE_MAGIC = 'BBS2';
-/** 'BBS2' + flags + cols + rows */
-export const SAVE_HEADER_BYTES = 13;
+export const SAVE_MAGIC = 'BBS3';
+/** 'BBS3' + flags + cols + rows + epoch + rev */
+export const SAVE_HEADER_BYTES = 21;
+/** 上一版：'BBS2' + flags + cols + rows */
+export const SAVE_MAGIC_V2 = 'BBS2';
+export const SAVE_HEADER_BYTES_V2 = 13;
 /** flags 位 0：载荷是 24bit/格（否则 4bit/格） */
 export const SAVE_FLAG_RGB24 = 1;
 
@@ -269,12 +277,16 @@ export interface SaveFile {
     flags: number;
     cols: number;
     rows: number;
+    /** 棋盘坐标空间 / 进程世代；v2 存档没有这一项，读出来是 0 */
+    epoch: number;
+    /** 存档对应的同步版本号；v2 存档没有这一项，读出来是 0 */
+    rev: number;
     /** 解压后的裸状态字节 */
     payload: Buffer;
 }
 
 /** 把当前棋盘打包成存档文件（头部 + deflate 载荷） */
-export function buildSaveFile(state: Uint32Array, cols: number, rows: number): Buffer {
+export function buildSaveFile(state: Uint32Array, cols: number, rows: number, epoch: number, rev: number): Buffer {
     const customColors = hasCustomColors(state);
     const raw = customColors ? encodeStateBuffer(state) : encodeLegacyStateBuffer(state);
 
@@ -283,24 +295,36 @@ export function buildSaveFile(state: Uint32Array, cols: number, rows: number): B
     header[4] = customColors ? SAVE_FLAG_RGB24 : 0;
     header.writeUInt32LE(cols, 5);
     header.writeUInt32LE(rows, 9);
+    header.writeUInt32LE(epoch >>> 0, 13);
+    header.writeUInt32LE(rev >>> 0, 17);
 
     return Buffer.concat([header, zlib.deflateSync(raw, { level: 6 })]);
 }
 
 /**
- * 解析新格式存档。不是新格式（老存档 / 文件损坏）返回 null，
+ * 解析 v3 / v2 存档。都不是（老存档 / 文件损坏）返回 null，
  * 由调用方回落到"按字节长度猜格式"的旧路径。
  */
 export function parseSaveFile(file: Buffer): SaveFile | null {
-    if (file.length <= SAVE_HEADER_BYTES) return null;
-    if (file.subarray(0, SAVE_MAGIC.length).toString('ascii') !== SAVE_MAGIC) return null;
+    const magic = file.subarray(0, SAVE_MAGIC.length).toString('ascii');
+    const isV3 = magic === SAVE_MAGIC;
+    const isV2 = magic === SAVE_MAGIC_V2;
+    if (!isV3 && !isV2) return null;
+
+    // 注意按各自的头长度判断：v2 的头只有 13 字节，
+    // 小棋盘的 v2 存档整体可能还不到 21 字节
+    const headerBytes = isV3 ? SAVE_HEADER_BYTES : SAVE_HEADER_BYTES_V2;
+    if (file.length <= headerBytes) return null;
 
     const flags = file[4];
     const cols = file.readUInt32LE(5);
     const rows = file.readUInt32LE(9);
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) return null;
 
-    return { flags, cols, rows, payload: zlib.inflateSync(file.subarray(SAVE_HEADER_BYTES)) };
+    const epoch = isV3 ? file.readUInt32LE(13) : 0;
+    const rev = isV3 ? file.readUInt32LE(17) : 0;
+
+    return { flags, cols, rows, epoch, rev, payload: zlib.inflateSync(file.subarray(headerBytes)) };
 }
 
 export interface DecodeResult {

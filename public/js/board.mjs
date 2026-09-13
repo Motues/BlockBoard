@@ -1,6 +1,7 @@
 // 棋盘数据：状态解码、命中测试、悬停高亮（含取色模式的特殊表现）。
 
 import {
+    CELL_BYTES,
     HOVER_SCALE,
     HOVER_TAU,
     HOVER_TINT,
@@ -115,8 +116,11 @@ export function applyPlainRegion({ start, width, height, value, rgb, isBlack }) 
 // --- 初始化棋盘 ---
 // resize / resetView 由 camera.mjs 提供，通过 initBoard 的第二个参数注入，
 // 避免 board 反过来 import camera
-export function initBoard(config, payload, hooks) {
+// options.keepState：棋盘状态已经在本机了（走增量同步 / 分块下发中途重连），
+// 不要用 payload 里的状态把它冲掉，只更新几何与视图
+export function initBoard(config, payload, hooks, options) {
     const { resizeCanvas, resetView } = hooks;
+    const keepState = Boolean(options && options.keepState);
 
     board.cols = config.cols;
     board.rows = config.rows;
@@ -124,7 +128,14 @@ export function initBoard(config, payload, hooks) {
     board.width = board.cols * board.cellSize + (board.cols - 1) * board.gap + board.padding * 2;
     board.height = board.rows * board.cellSize + (board.rows - 1) * board.gap + board.padding * 2;
 
-    gridState = decodeBoardState(payload, board.cols * board.rows);
+    if (!keepState) {
+        gridState = decodeBoardState(payload, board.cols * board.rows);
+    }
+
+    // 长度对不上（棋盘尺寸变了、缓存残缺）时重建一份全黑，别让旧数组越界
+    if (gridState.length !== board.cols * board.rows) {
+        gridState = new Uint32Array(board.cols * board.rows);
+    }
 
     for (const timer of pendingTimers.values()) {
         clearTimeout(timer);
@@ -136,6 +147,40 @@ export function initBoard(config, payload, hooks) {
 
     resizeCanvas();
     resetView();
+}
+
+/**
+ * 分块下发：把一块（若干行）的状态写进棋盘。
+ * encoding 带 -bin 后缀只是说明 data 是二进制，解码方式与不带后缀的一致。
+ * 返回写进去的格子数（0 表示这块没用上）
+ */
+export function applyStateChunk(bytes, encoding, rowStart, rows) {
+    if (!bytes || !board.cols || gridState.length === 0) return 0;
+
+    const start = rowStart * board.cols;
+    const count = Math.min(rows * board.cols, gridState.length - start);
+    if (count <= 0) return 0;
+
+    if (typeof encoding === 'string' && encoding.indexOf('rle') === 0) {
+        decodeRleInto(bytes, gridState, start, count);
+    } else {
+        decodeDenseInto(bytes, gridState, start, count, CELL_BYTES);
+    }
+
+    return count;
+}
+
+/**
+ * 用本地缓存里的稠密字节（3 字节/格）恢复棋盘状态。
+ * 长度对不上返回 false（调用方应该向服务端要一次全量）
+ */
+export function restoreGridState(bytes, total) {
+    if (!bytes || bytes.length < total * CELL_BYTES) return false;
+
+    gridState = new Uint32Array(total);
+    decodeDenseInto(bytes, gridState, 0, total, CELL_BYTES);
+
+    return true;
 }
 
 // 服务端下发的棋盘状态可能是几种形态：
@@ -170,8 +215,9 @@ function decodeBoardState(payload, total) {
 // 把服务端发来的状态统一成字节数组。
 // socket.io 的二进制附件在浏览器里是 ArrayBuffer（engine.io 把 WebSocket 的 binaryType
 // 设成了 arraybuffer），另外兼容 Uint8Array、Node 的 Buffer（ArrayBufferView）、
-// 以及 JSON 化的 { type: 'Buffer', data: [...] } 和 base64 字符串
-function toBytes(data) {
+// 以及 JSON 化的 { type: 'Buffer', data: [...] } 和 base64 字符串。
+// 增量同步的 connection.mjs 也会用它（分块数据、缓存里的字节）
+export function toBytes(data) {
     if (!data) return null;
 
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -226,33 +272,39 @@ function decodeState(state, total) {
 //   bytesPerCell = 4：上一版格式，每格 4 字节，高 8 位是"自定义颜色"标记
 function decodeStateRgb(bytes, total, bytesPerCell) {
     const out = new Uint32Array(total);
+    decodeDenseInto(bytes, out, 0, total, bytesPerCell);
+
+    return out;
+}
+
+// 把稠密状态写进 out[offset .. offset+count)
+function decodeDenseInto(bytes, out, offset, count, bytesPerCell) {
     const step = bytesPerCell === 4 ? 4 : 3;
 
-    for (let i = 0; i < total; i++) {
-        const offset = i * step;
-        if (offset + step > bytes.length) break;
+    for (let i = 0; i < count; i++) {
+        const source = i * step;
+        const target = offset + i;
+        if (source + step > bytes.length || target >= out.length) break;
 
         if (step === 4) {
             // 上一版：高 8 位是标记位，低 24 位才是颜色
             const raw = (
-                bytes[offset] |
-                (bytes[offset + 1] << 8) |
-                (bytes[offset + 2] << 16) |
-                (bytes[offset + 3] << 24)
+                bytes[source] |
+                (bytes[source + 1] << 8) |
+                (bytes[source + 2] << 16) |
+                (bytes[source + 3] << 24)
             ) >>> 0;
 
-            out[i] = (raw & 0x01000000) ? customValue(raw & RGB_MASK) : (raw & PRESET_MAX);
+            out[target] = (raw & 0x01000000) ? customValue(raw & RGB_MASK) : (raw & PRESET_MAX);
             continue;
         }
 
-        out[i] = (
-            bytes[offset] |
-            (bytes[offset + 1] << 8) |
-            (bytes[offset + 2] << 16)
+        out[target] = (
+            bytes[source] |
+            (bytes[source + 1] << 8) |
+            (bytes[source + 2] << 16)
         ) >>> 0;
     }
-
-    return out;
 }
 
 // 读取 varint（每字节 7 位，最高位是"还有后续字节"标志）
@@ -276,8 +328,15 @@ function readVarint(bytes, cursor) {
 // 没被覆盖的格子保持黑色
 function decodeRleState(bytes, total) {
     const out = new Uint32Array(total);
+    decodeRleInto(bytes, out, 0, total);
+
+    return out;
+}
+
+// 把 RLE 写进 out[offset .. offset+count)；跳过计数从这段的起点算起
+function decodeRleInto(bytes, out, offset, count) {
     const cursor = { pos: 0 };
-    let index = 0;
+    let index = offset;
 
     while (cursor.pos < bytes.length) {
         index += readVarint(bytes, cursor);
@@ -285,15 +344,13 @@ function decodeRleState(bytes, total) {
         const run = readVarint(bytes, cursor);
         const value = readVarint(bytes, cursor);
 
-        if (run <= 0 || index >= total) break;
+        if (run <= 0 || index >= offset + count) break;
 
-        const end = Math.min(total, index + run);
+        const end = Math.min(offset + count, index + run);
         for (let i = index; i < end; i++) out[i] = value;
 
         index = end;
     }
-
-    return out;
 }
 
 // --- 命中测试：屏幕坐标 → 方块下标（CSS px）---

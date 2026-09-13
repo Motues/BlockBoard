@@ -2,16 +2,70 @@
 // 各功能模块都从这里取状态，避免模块之间互相 import 成环。
 
 import { GAP_SIZE, PADDING_SIZE, SWITCH_SPIN_RATE } from './config.mjs';
+import { loadCachedState } from './state-cache.mjs';
 
 // 握手里告诉服务端自己认识哪些状态格式（见 src/server.ts 的 init-game）：
 //   rgb24 = 24bit 取值（>= 16 是自定义颜色）+ 3 字节/格 的稠密状态
 //   rle   = RLE 紧凑状态（跳过黑格，通常只有几十字节）
 //   bin   = 状态用二进制发（ArrayBuffer），省掉 base64 的 33% 与客户端的 atob
 //   batch = 认识合并广播 update-squares（一个 16ms 窗口内的多条单格改动合成一条）
+//   chunk = 认识分块下发（state-chunk / state-done）：大棋盘不会一次性塞一条几 MB 的消息
+//   sync  = 认识增量同步（sync-delta / sync-done）：重连时只补发差量
 // 服务端会据此只发一份状态，并且只发客户端认识的格式
-const STATE_CAPS = ['rgb24', 'rle', 'bin', 'batch'];
+const STATE_CAPS = ['rgb24', 'rle', 'bin', 'batch', 'chunk', 'sync'];
 
-export const socket = io({ auth: { caps: STATE_CAPS } });
+// --- 本地缓存与同步版本号 ---
+// 先把上次缓存的棋盘读出来（IndexedDB）：握手时带上它的 epoch / rev，
+// 服务端能接上就只发差量，接不上就发全量。读缓存是异步的，所以这里用顶层 await ——
+// 反正拿到 init-game 之前棋盘也没法画，导入本模块的模块会等它完成
+let cachedState = null;
+try {
+    cachedState = await loadCachedState();
+} catch {
+    cachedState = null;
+}
+
+// epoch = 服务端的棋盘坐标空间世代；rev = 已应用到的状态变更消息版本号。
+//   ready     = 本机这份状态是完整的（分块下发收齐 / 差量应用完才为真），没 ready 不能写缓存
+//   claimable = 上面那个 epoch / rev 有没有"本机完整状态"兜底。分块下发中途为 false：
+//               这时握手只能报"我没有"，否则服务端会以为我们持有对应版本的状态，只补差量，
+//               结果是把差量套在一份残缺的棋盘上
+export const syncInfo = {
+    epoch: cachedState && Number.isInteger(cachedState.epoch) ? cachedState.epoch : 0,
+    rev: cachedState && Number.isInteger(cachedState.rev) ? cachedState.rev : 0,
+    ready: false,
+    claimable: Boolean(cachedState)
+};
+
+export function getCachedState() {
+    return cachedState;
+}
+
+/** 版本号只增不减：差量是绝对写入，乱序/重复应用都不会出错 */
+export function setSyncRev(rev) {
+    if (Number.isInteger(rev) && rev > syncInfo.rev) syncInfo.rev = rev;
+}
+
+export const socket = io({
+    // 由 main.mjs 在所有模块接好之后显式 connect()：
+    // 这样能保证 init-game 的处理器已经挂上，也不会漏掉第一帧之前的任何事件
+    autoConnect: false,
+    // 回调形式：每次（重）连都取当前的 epoch / rev。
+    // 报不出可信的版本号时就报 0 / -1，让服务端发全量。
+    //
+    // 注意 socket.io-client 4.8 只支持这两种写法（见客户端 onopen：
+    // `typeof this.auth == "function"` 时它调用 this.auth(cb)，否则发 this.auth 本身）：
+    //   auth: (cb) => cb({ ... })      回调式（这里用的）
+    //   auth: { ... }                  对象式（每个连接用同一份，取不到最新版本号）
+    // **返回值的写法是无效的**：socket.io 不会看返回值，CONNECT 包永远发不出去 ——
+    // 表现为传输层连上了（transport=websocket、connected=false），但 init-game 永远收不到，
+    // 棋盘空白、在线人数停在 "..."、导出图片报 "board not ready"
+    auth: (done) => done({
+        caps: STATE_CAPS,
+        epoch: syncInfo.claimable ? syncInfo.epoch : 0,
+        rev: syncInfo.claimable ? syncInfo.rev : -1
+    })
+});
 
 export const canvas = document.getElementById('board');
 export const ctx = canvas.getContext('2d');
@@ -92,6 +146,20 @@ export function markPickJustHandled() {
     pickJustHandled = true;
 }
 
+// 触屏上画笔圆环是模态的：点圆环外面只收起圆环，这次点击不该顺手涂色。
+// （桌面端不用它 —— 那里压根不用点外面来收圆环）
+let ringJustClosed = false;
+
+export function consumeRingJustClosed() {
+    const closed = ringJustClosed;
+    ringJustClosed = false;
+    return closed;
+}
+
+export function markRingJustClosed() {
+    ringJustClosed = true;
+}
+
 // --- 开发者模式 ---
 // 开关由 devtools.mjs 维护（登录成功后打开），交互与渲染只读这里的状态
 let devMode = false;
@@ -139,6 +207,9 @@ export function getViewportCenter() {
 
 // 桌面端才启用悬停高亮
 export const hoverSupported = window.matchMedia('(hover: hover)').matches;
+
+// 触屏设备：画笔圆环靠长按呼出（没有右键），提示弹窗也换一份文案
+export const touchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
 
 // --- 渲染调度 ---
 // 各模块把"每帧要做什么"注册进来：

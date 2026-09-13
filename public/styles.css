@@ -25,6 +25,8 @@ body {
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='10' fill='white' fill-opacity='0.3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white'/%3E%3C/svg%3E") 16 16, auto;
     user-select: none;
     -webkit-user-select: none;
+    /* 长按选色时别弹出 iOS 的"拷贝 / 存储图片"气泡 */
+    -webkit-touch-callout: none;
     /* 交给脚本处理滚轮/双指手势，避免浏览器自身的缩放与回弹 */
     touch-action: none;
     overscroll-behavior: none;
@@ -769,19 +771,35 @@ h1 {
     line-height: 1.4;
 }
 
-.hint-text-en {
-    /* font-size: 0.6rem; */
+/* 提示弹窗的两份文案：默认显示桌面版，触屏上只显示触摸版
+   （showHintPopup 给弹窗加 touch 类，用媒体查询判断的话和运行时判断可能不一致） */
+.hint-text-touch {
+    display: none;
+}
+
+.hint-popup.touch .hint-text-desktop {
+    display: none;
+}
+
+.hint-popup.touch .hint-text-touch {
+    display: block;
+}
+
+.hint-text-desktop,
+.hint-text-touch {
     color: #ffffff;
     white-space: normal;
     line-height: 1.4;
 }
 
-.hint-text-en ul {
+.hint-text-desktop ul,
+.hint-text-touch ul {
     padding-left: 20px;
     margin: 0;
 }
 
-.hint-text-en li {
+.hint-text-desktop li,
+.hint-text-touch li {
     margin: 5px 0;
 }
 

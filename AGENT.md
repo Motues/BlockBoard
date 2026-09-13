@@ -4,13 +4,39 @@
 
 ## 项目结构
 
-- `src/server.ts` —— Hono + socket.io 服务端：棋盘状态、单格与批量改色、静态资源托管、自动存档。
-- `src/state.ts` —— 棋盘状态的取值约定与编解码（24bit / 4bit / 1bit 存档、RLE 紧凑状态、批量差量 runs、按左上角对齐的重排）。编码一律先出 `Buffer`（`encodeStateBuffer` / `encodeLegacyStateBuffer` / `encodeRleBuffer`），`encodeState` 之类的字符串版只是它的 base64 包装；存档是带 magic 与 deflate 的 v2 格式（`buildSaveFile` / `parseSaveFile`）。
-- `src/dev-api.ts` —— 开发者工具的服务端部分：密码换 token、token 校验、批量改色接口。
+服务端按功能拆分，依赖方向单向（`server` → `board-sync` → `board-state` → `board-persist` / `board-config`）：
+
+- `src/server.ts` —— 入口：Hono 应用、静态资源、socket.io 连线、启动与退出。只做装配。
+- `src/board-config.ts` —— 棋盘配置，以及**可下发给客户端的配置**（`publicConfig()` 剥离 `devPassword`）。敏感字段只有这一个出口。
+- `src/board-persist.ts` —— 存档读写（v3 / v2 / 老格式）与尺寸变更时的重排。
+- `src/board-state.ts` —— 棋盘状态：格子数据、epoch / `syncRev`、全盘编码快照缓存、改色、广播合并、自动存档。不 import socket。
+- `src/board-sync.ts` —— socket.io 协议：首屏状态下发（单帧 / 分块 / 增量）、实时广播、增量日志、令牌桶。
+- `src/state.ts` —— 取值约定与编解码（24bit / 4bit / 1bit、RLE、批量差量 runs、重排）。编码一律先出 `Buffer`（`encodeStateBuffer` / `encodeLegacyStateBuffer` / `encodeRleBuffer`），字符串版只是它的 base64 包装；存档是带 magic、尺寸、epoch、rev 与 deflate 的 v3 格式（`buildSaveFile` / `parseSaveFile`，v2 也能读）。
+- `src/dev-api.ts` —— 开发者工具的服务端部分：密码解析（`resolveDevPassword()`）、密码换 token、token 校验、批量改色接口。
 - `public/` —— 纯 ES module 客户端，无打包、无构建步骤，由 `public/index.html` 通过 `public/js/main.mjs` 加载。
 - `game-config.json` —— 棋盘尺寸、端口、开发者密码、会话时长。
 - `data/` —— 运行时生成的存档目录（`board-state.dat`、`board-size.json`），不进版本库。
 - [FEATURE.md](./FEATURE.md) —— 还没做的同步优化（分块下发 / 增量同步 / 瓦片）。
+
+`board-state` 需要广播或写盘时，通过 `initBoardState()` 注入的回调（`onFlushPending` / `onPersist` / `onRegionPaint`）回调到 `server.ts`，从而不必反过来 import `board-sync`。
+
+> `init-game` 下发的 `config` 走 `publicConfig()`，**不再包含 `devPassword`**：以前直接把 `game-config.json` 整个 spread 进去，
+> 等于把开发者密码明文发给每个客户端（浏览器控制台里就能看到）。加字段时注意别再把敏感项塞进 `gameConfig` 直接下发。
+
+## 静态资源与缓存（`src/server.ts`）
+
+`public/**` 由 `serveStatic` 托管；在它前面挂了一层中间件，给 `.html / .js / .mjs / .css / .json`
+加 `Cache-Control: no-cache`（浏览器每次回源校验）。Hono 的 serveStatic 不发 ETag、也不处理
+条件请求，所以实际效果接近"每次都重新下载"——本地/局域网这点开销可以忽略。
+
+**为什么必须有它**：这个项目没有打包步骤，模块之间是裸的相对路径 `import`（`./shared.mjs`），
+URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有）。只靠 `Last-Modified` 的话，
+浏览器会按启发式把旧模块缓存住，出现"新页面 + 旧模块"的混合，整个模块图会加载失败，
+表现就是**画布和在线人数都不出来**（`node --check` 与静态检查都发现不了），而且普通刷新未必恢复。
+踩过一次，**别删这层中间件**。
+
+前端还会显式报连接状态（`connection.mjs`）：`disconnect` / `connect_error` 时把在线人数显示成 `—`
+并弹一次 toast（10 秒节流）。这样"服务端没在运行"和"页面坏了"能一眼分开。
 
 ## 客户端布局
 
@@ -29,9 +55,10 @@
 | `devtools.mjs` | 开发者模式：登录、框选、右键菜单、闭合区域填充、导出 |
 | `ring.mjs` | 画笔圆环、选项面板、帮助弹窗 |
 | `picker.mjs` | 调色盘、最近颜色色块、取色器模式 |
-| `connection.mjs` | socket 事件与全局 UI 绑定 |
+| `connection.mjs` | socket 事件与全局 UI 绑定；首屏状态的三条路（单帧 / 分块 / 增量）与实时广播的落地 |
 | `i18n.mjs` | 语言状态、`t()`、`applyStaticI18n()`、`onLangChange()` |
 | `settings.mjs` | 居中的设置弹窗 + 浏览器本地的开发者密码存取 |
+| `state-cache.mjs` | 棋盘状态的 IndexedDB 缓存（增量同步用）、节流写盘；不 import 任何模块 |
 | `edge-hint.mjs` | 桌面版 Edge 的鼠标手势提示卡片（含跳转 Edge 设置的按钮） |
 | `toast.mjs` | 底部居中的浮层提示，开发者工具与设置共用 |
 
@@ -43,6 +70,11 @@
 - 功能模块之间的链只有一条：`ring → picker → brush → cursor`。
 - `i18n ← settings ← devtools`：设置弹窗依赖 i18n，开发者工具依赖设置里的密码存取。
   `toast` 与 `edge-hint` 是独立叶子，只依赖 `i18n`。
+- `state-cache.mjs` 是叶子（**不 import 任何模块**，避免和 `shared.mjs` 成环）：
+  `shared.mjs` 在顶层 `await` 里读它（握手要带上缓存里的 epoch / rev），
+  `connection.mjs` 往里报"状态变了"，`main.mjs` 把"当前状态 + epoch/rev"喂给它写盘。
+  因为这个顶层 `await`，导入 `shared.mjs` 的模块都会等缓存读完才开始执行 —— 反正拿到
+  `init-game` 之前棋盘也没法画。
 - `interactions` 不 import `devtools`：画布上的左键按下 / 移动 / 松手 / 右键通过 `shared.mjs` 的
   `devEvents`（一个 `EventTarget`）转发成 `leftdown` / `leftmove` / `leftup` / `leftcancel` / `contextmenu`
   事件，避免 `interactions ←→ devtools` 成环。
@@ -124,6 +156,11 @@ Edge 自带的「鼠标手势」是**浏览器级**功能：长按右键拖动�
   否则切换语言不会更新。
 - 语言切换走 `onLangChange(handler)`：`ring` / `picker` / `devtools` 注册回调后重绘自己的文字。
   静态文案（含 `edge-hint` 卡片）由 `applyStaticI18n()` 在切换时统一刷新，不需要自己注册。
+- 帮助弹窗（`#hint-popup`）有**两份文案**：`.hint-text-desktop` 与 `.hint-text-touch`，
+  由 `showHintPopup()` 按 `shared.mjs` 的 `touchDevice` 给弹窗加 `touch` 类决定显示哪一份。
+  两套的键名是分开的（`hint.click` / `hint.zoom` / `hint.brush` / `hint.pan` / … 与
+  `hint.tap` / `hint.longPress` / `hint.drag` / `hint.pinch` / `hint.menu`），
+  改操作方式时两套都要动，别只改一份。
 
 ## 状态格式（`src/state.ts`）
 
@@ -141,23 +178,26 @@ Edge 自带的「鼠标手势」是**浏览器级**功能：长按右键拖动�
 
 存档：
 
-- `data/board-state.dat` —— **v2 格式**：`'BBS2'` + 1 字节 flags（位 0 = 载荷是 24bit/格）+ `uint32LE cols`
-  + `uint32LE rows` + `deflate(裸状态字节)`，共 13 字节头。带自定义颜色就写 24bit（3 字节/格），
-  否则写 4bit/格（每字节两格，前一个格子放低 4 位），文件小 6 倍且旧版本程序也能读。
+- `data/board-state.dat` —— **v3 格式**：`'BBS3'` + 1 字节 flags（位 0 = 载荷是 24bit/格）
+  + `uint32LE cols` + `uint32LE rows` + `uint32LE epoch` + `uint32LE rev` + `deflate(裸状态字节)`，共 21 字节头。
+  带自定义颜色就写 24bit（3 字节/格），否则写 4bit/格（每字节两格，前一个格子放低 4 位），文件小 6 倍且旧版本程序也能读。
   写盘是「先写 `.tmp` 再 `rename`」（原子替换，崩了不会留半个文件），并且**只有棋盘真的变了才写**
-  （`stateRev !== savedRev` 才动手，见下面的自动存档）。
+  （`stateRev !== savedRev` 才动手）；写之前会先把排队中的单格广播 flush 掉，保证文件里的 `rev` 与状态配套。
+- `epoch` / `rev` 是给增量同步用的（见下文）：服务端重启后**沿用存档里的 epoch / rev**，
+  客户端拿着同样的版本号回来时可以直接"什么都不用传"；棋盘尺寸变了则换一个新 epoch（客户端缓存一律作废）。
+  v2 存档（13 字节头、没有 epoch / rev）也能读，读出来 epoch = 0 / rev = 0，服务端会换一个新 epoch。
 - `data/board-size.json` —— 这份存档对应的 `{ cols, rows }`。启动时先写一次，
-  每次自动存档（每 60 秒）时一起更新；它主要是给**旧格式**存档消歧用的（v2 的尺寸在文件头里）。
+  每次自动存档（每 60 秒）时一起更新；它主要是给**旧格式**存档消歧用的（新格式的尺寸在文件头里）。
 - 自动存档：`setInterval(saveState, 60s)`，`saveState()` 第一件事就是比较 `stateRev` 与 `savedRev`，
   没改动直接返回 —— 不再每分钟重写一次几 MB 的文件。
 
-旧存档仍然能读（`loadState`）：先试 `parseSaveFile`（v2）；不是 v2 就把整个文件当成 base64 文本，
+旧存档仍然能读（`loadState`）：先试 `parseSaveFile`（v3 / v2）；都不是就把整个文件当成 base64 文本，
 交给 `decodeState` 按字节长度依次判定 **24bit（3 字节/格）→ 32bit（4 字节/格，高 8 位是自定义颜色标记）
 → 4bit（每字节两格）→ 1bit（每字节八格）**。
 判定顺序很关键：先看字节数是否正好等于某种格式在当前配置下的长度，都不匹配再尝试反推格子数，
 否则「比当前棋盘小的 4bit 存档」会被当成 24bit 读出乱码。字节数不足以反推尺寸时用
 `board-size.json` 里的上一个配置消歧，仍然没有就按更常见的 4bit 读。
-旧存档会在下一次真正发生改动时被自动写成 v2（不需要手动迁移）。
+旧存档会在下一次真正发生改动时被自动写成 v3（不需要手动迁移）。
 
 改棋盘尺寸（`game-config.json` 的 `rows` / `cols` 变了）时按**左上角对齐**重排（`regridState`）：
 逐行整段搬运，棋盘变大时右下角补黑，变小时丢弃超出部分，重叠区域颜色原样保留。
@@ -165,27 +205,42 @@ Edge 自带的「鼠标手势」是**浏览器级**功能：长按右键拖动�
 v2 存档的尺寸是精确的；旧格式存档尺寸靠字节长度推断：24bit / 4byte 布局精确，只改行数也精确；
 唯一无法还原的是「4bit 或 1bit 存档且列数也变了」，那种情况退化成逐格裁剪 / 补黑（改动前的旧行为）。
 
-## Socket 事件（`src/server.ts`）
+## Socket 事件（`src/board-sync.ts`）
 
 | 事件 | 方向 | 载荷 |
 | --- | --- | --- |
-| `init-game` | server → client | `{ config, stateRgb, stateEncoding, black, maxColorIndex, rgbSupport }`；`stateRgb` 是 24bit 状态（RLE 或稠密），声明了 `bin` 能力时是**二进制附件**（浏览器里收到 `ArrayBuffer`），否则是 base64 文本；没声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
+| `init-game` | server → client | `{ config, black, maxColorIndex, rgbSupport, epoch, rev, stateMode }` + 状态。`stateMode` 说明状态怎么给：`inline`（`stateRgb` + `stateEncoding` 一条消息装下）、`chunks`（后面跟 `state-chunk` ... `state-done`）、`client`（本机已有状态，后面跟 `sync-delta` / `sync-done`）。`stateRgb` 声明了 `bin` 能力时是**二进制附件**（浏览器里收到 `ArrayBuffer`），否则是 base64 文本；没声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
+| `state-chunk` | server → client | `{ seq, rowStart, rows, encoding, data }` —— 分块下发的一块，`encoding` 为 `rle` / `dense`（带 `-bin` 后缀表示二进制）；跳过计数相对**本块起点**，客户端按行偏移套用 |
+| `state-done` | server → client | `{ rev }` —— 分块下发收齐。客户端这时才认版本号，并回放缓冲的实时广播 |
+| `sync-delta` | server → client | `{ from, to, patches: [{ event, payload }, ...] }` —— 增量同步：把日志里的状态变更按顺序重放（`event` 就是 `update-square` / `update-squares` / `update-region`），分批发送 |
+| `sync-done` | server → client | `{ rev }` —— 增量补完（或本来就不需要补） |
+| `sync-request` | client → server | `{ epoch, rev }` —— 客户端主动要一次重新同步：版本号对得上就走增量，对不上就发全量。缓存坏了、尺寸对不上时用 |
 | `paint-square` | client → server | `{ index, brush }`（预设编号）或 `{ index, rgb }`（自定义 24bit）；与画笔同色则擦成黑色，否则涂成画笔色 |
 | `toggle-square` | client → server | `index` —— 最早的黑白切换协议，仍然接受 |
-| `update-square` | server → client | `{ index, value, rgb, isBlack }`；`rgb` 是自定义颜色的 24bit 值（否则 `null`），`value` / `isBlack` 是给未刷新旧页面的兼容字段。单格改动走这条 |
-| `update-squares` | server → client | `{ cells: [[index, value], ...] }`，一个广播窗口内的多条单格改动合并成一条；`value` 就是格子取值本身，只发给声明了 `batch` 的客户端 |
+| `update-square` | server → client | `{ index, value, rgb, isBlack, rev }`；`rgb` 是自定义颜色的 24bit 值（否则 `null`），`value` / `isBlack` 是给未刷新旧页面的兼容字段。单格改动走这条 |
+| `update-squares` | server → client | `{ cells: [[index, value], ...], rev }`，一个广播窗口内的多条单格改动合并成一条；`value` 就是格子取值本身，只发给声明了 `batch` 的客户端 |
 | `paint-rejected` | server → client | `{ index }` —— 这次点击被令牌桶挡掉了，客户端据此把乐观风车收回去 |
 | `online-users` | server → client | 当前在线人数。**别用 `volatile`**：socket.io 在传输层正在写（例如刚发出的 CONNECT 应答）时会把 volatile 包直接丢掉，而这个人数只在连接 / 断开时各发一次，丢了就永远补不上（踩过这个坑） |
-| `update-region` | server → client | 开发者工具的批量改色广播，矩形 `{ start, runs, value, rgb, isBlack }`，闭合区域 `{ indices, runs: '', value, rgb, isBlack }` |
+| `update-region` | server → client | 开发者工具的批量改色广播，矩形 `{ start, runs, value, rgb, isBlack, rev }`，闭合区域 `{ indices, runs: '', value, rgb, isBlack, rev }` |
 
-握手能力：客户端用 `io({ auth: { caps: ['rgb24', 'rle', 'bin', 'batch'] } })` 声明自己认识哪些格式。
+握手：客户端用 `io({ auth: (done) => done({ caps, epoch, rev }) })` 声明能力并报上自己的状态版本。
+**必须是回调式（或对象式），不能写成 `auth: () => ({ ... })`**：socket.io-client 4.8 在
+`onopen` 里只判断 `typeof this.auth == "function"`，是函数就调用 `this.auth(callback)`、
+否则直接发 `this.auth` 本身，**完全不看返回值**。写成"返回对象"的箭头函数不会报错，
+但 CONNECT 包永远发不出去 —— 表现是传输层已连上（`connected` 仍为 false）、`init-game` 收不到，
+于是棋盘空白、在线人数停在 `...`、导出图片报 `board not ready`（踩过这个坑）。
 
 | 能力 | 含义 |
 | --- | --- |
 | `rgb24` | 认识 24bit 取值与 3 字节/格 的稠密状态，服务端因此发 `stateRgb` 而不是旧字段 `state` |
 | `rle` | 额外认识 RLE 紧凑状态 |
-| `bin` | 状态用二进制发（`stateEncoding` 带 `-bin` 后缀），省掉 base64 的 33% 与客户端的 `atob` |
+| `bin` | 状态用二进制发（`stateEncoding` / `encoding` 带 `-bin` 后缀），省掉 base64 的 33% 与客户端的 `atob` |
 | `batch` | 认识合并广播 `update-squares` |
+| `chunk` | 认识分块下发（`state-chunk` / `state-done`），大棋盘不会一次性塞一条几 MB 的消息 |
+| `sync` | 认识增量同步（`sync-delta` / `sync-done`） |
+
+`auth` 里的 `epoch` / `rev` 是客户端**已经持有**的状态版本：报不出可信的值时就报 `0` / `-1`
+（`syncInfo.claimable` 为假），服务端据此直接发全量 —— 详见下面的"首屏状态下发的三条路"。
 
 RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多少格, 颜色值]`，没被提到的格子保持黑色。
 空棋盘零字节，稀疏棋盘几十字节；只有「每个格子颜色都不同」的噪点棋盘会比稠密格式更大，
@@ -202,7 +257,46 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
   老页面照旧）；多格时给 `batch` 客户端发一条 `update-squares`，给其它客户端逐格补发 `update-square`。
 - **令牌桶限流**：每个连接 `PAINT_BURST`（60）容量、`PAINT_PER_SECOND`（30）补充，
   正常点击远远用不满；被挡掉时回 `paint-rejected`，客户端立刻收起乐观动画而不是等 8 秒超时。
+  `sync-request` 另有一个更严的限流（连发 5 次、每 3 秒补 1 次），别让它逼服务端反复编码整盘。
 - `maxHttpBufferSize: 1e6` 显式写明上行单条消息上限；`stateRev` 同时是自动存档的脏标记。
+
+### 首屏状态下发的三条路（`sendInitialState`）
+
+`stateRev` 与 `syncRev` 是**两个**计数器，别混：
+
+| 计数器 | 何时 +1 | 用途 |
+| --- | --- | --- |
+| `stateRev` | 每次改色 | 全盘编码快照的缓存键、自动存档的脏标记 |
+| `syncRev` | **每次发出**一条状态变更消息 | 增量同步的版本号（客户端缓存拿它对账） |
+
+分开的原因：单格改动会在 `pendingSquares` 里排 16 ms 的队，`stateRev` 已经涨了但消息还没发出去；
+客户端能报出来的版本号必须是"消息版本"，否则会出现"我拿到 rev N，但其实缺一条消息"。
+因此发快照 / 存档之前都先 `flushSquareUpdates()`，保证 `syncRev` 与快照内容配套。
+
+三条路（按客户端握手里的 epoch / rev 决定）：
+
+1. **`stateMode: 'client'` + `sync-done`** —— epoch 一致且 `clientRev === syncRev`：什么都不用传。
+2. **`stateMode: 'client'` + `sync-delta`** —— epoch 一致、`clientRev` 还在 patch 日志覆盖范围内：
+   按 `patchLog` 重放版本号更大的消息（每条消息自带 `rev`）。日志是条数 + 字节数双上限的环形缓冲，
+   `patchLogCovers()` 的判定是 `log[0].rev <= rev + 1`（最老那条之前的改动已经被挤掉了）。
+3. **全量** —— 其余情况：状态小于 `CHUNK_THRESHOLD_BYTES`（96 KB）时一条 `init-game` 装下；
+   否则（且客户端声明了 `chunk`）走 `sendChunkedState()`：按 `CHUNK_TARGET_BYTES`（64 KB）折算成
+   若干行一块，每块独立编码（RLE / 稠密取小的），块间 `setImmediate` 让出事件循环。
+
+客户端的对应实现（`connection.mjs`）：
+
+- `stateMode: 'client'` 时**优先用内存里那份状态**（断线重连，页面没刷新），只有内存里没有完整状态时
+  才从 IndexedDB 缓存恢复 —— 缓存是节流写的（最多落后几秒），拿它盖内存会把新改动冲掉。
+  缓存也解不出来（尺寸不符 / 残缺）就发 `sync-request` 要全量。
+- `stateMode: 'chunks'` 期间把实时广播**缓冲**起来（`bufferedEvents`），`state-done` 时先回放再认版本号：
+  顺序反了的话，中间那一刻会声称"我已经到 rev X"，其实还差几条缓冲消息，重连时服务端就不补了。
+- 版本号一律用 `setSyncRev()` 取 `max`：差量是绝对写入，乱序 / 重复应用都安全，但版本号不能倒退。
+- `syncInfo.claimable` 表示"我报出去的 epoch / rev 有没有本机完整状态兜底"：分块下发中途为假，
+  这时握手只能报 `epoch 0 / rev -1`，否则服务端会把差量套在一份残缺的棋盘上。
+- 缓存写盘由 `main.mjs` 注入的 provider 提供内容，`connection.mjs` 只负责在状态变化时
+  `markCacheDirty()`；`visibilitychange` / `pagehide` 时立即 flush 一次。
+
+还没做的部分（断点续传、哈希校验、瓦片）在 [FEATURE.md](./FEATURE.md) 里。
 
 ## 开发者工具（`src/dev-api.ts`）
 
@@ -260,6 +354,31 @@ HTTP 端点：
 （`'A' & 0x7f` → NaN → 0），于是每个 varint 都读成 0，`run <= 0` 立刻 break，
 整片改动静默丢失（表现为"区域填充后画面不刷新"）。
 
+## 画布输入：桌面端与触屏两套逻辑（`interactions.mjs`）
+
+两套操作是分开的，改的时候别互相带坏：
+
+| 操作 | 桌面端 | 触屏 |
+| --- | --- | --- |
+| 涂色 / 擦除 | 左键点方块 | **轻点**方块 |
+| 选画笔颜色 | 右键短按呼出圆环 | **长按**方块呼出圆环 |
+| 平移画布 | 右键长按（或按下后拖动） | **单指拖动** |
+| 缩放 | 滚轮 | **双指捏合** |
+| 收起圆环 | 右键 / Esc / 点外面 | 点圆环外任意处（圆环是**模态**的） |
+
+- 触屏轻点不是靠 `click` 直接判定的：`touchstart` 时先把这次按下记成"可能是轻点"
+  （`touchTap`，同时记下当时的操作模式 `pointerPhase`），`touchend` 才定案 ——
+  拖动超过 `TOUCH_DRAG_SLOP`、变成双指、或长按生效都会把它作废。
+- `pointerPhase` 必须在下按时记下来：取色成功后 `pickCellAt` 会立刻 `stopPicking()`，
+  `click` 里再读 `isPickMode()` 就已经是 false，会把取色那一下当成普通涂色。
+- 触屏长按阈值 `TOUCH_LONGPRESS_MS = 420`（比右键的 220 长，手指会抖）。
+  长按生效后 `suppressTouchContextMenu` 要留到 `onContextMenu` 里再清：
+  浏览器补发的 `contextmenu` 在 `touchend` **之后**才到，在抬手时就清会拦不住。
+- 圆环模态：点圆环外只收起它、这次点击不涂色（`markRingJustClosed()` →
+  `interactions` 里 `consumeRingJustClosed()` 直接 return）；点色块仍然正常选中
+  （色块在 `#brush-ring` 内，`onPointerDown` 不会去收它）。
+- 开发者模式下触屏不接管手势：长按 / 框选由 `devtools` 负责，这里只记 `pointerPhase`。
+
 ## 客户端开发者模式交互（`devtools.mjs`）
 
 - 入口是底部按钮条里的「开发者工具」按钮（`#devtools-button`，绑定在 `bindDevEvents()` 里）。
@@ -300,5 +419,11 @@ HTTP 端点：
 | `blockboard-brush-color` | 当前画笔：预设存编号，自定义颜色存 `#rrggbb` |
 | `blockboard-recent-colors` | 最近使用的画笔颜色（`#rrggbb` 的 JSON 数组，最新在前，最多 10 条，跳过纯黑） |
 | `blockboard-edge-gesture-hint` | 桌面版 Edge 的鼠标手势提示是否已经点过「知道了」（`1` = 不再提示） |
+
+浏览器数据库（增量同步用，见 `state-cache.mjs`）：
+
+| 库 / 表 | 键 | 内容 |
+| --- | --- | --- |
+| `blockboard` / `board-state` | `current` | `{ epoch, rev, cols, rows, bytes }` —— 状态是 3 字节/格 的稠密裸字节，`epoch` / `rev` 与它一起在同一个事务里写，保证对得上。超过 12 MB 的棋盘不缓存 |
 
 浏览器隐私模式下 `localStorage` 可能写不进去，所有读写都包了 try/catch 并静默忽略。

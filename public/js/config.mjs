@@ -41,6 +41,11 @@ export const RIGHT_BUTTON = 2;          // MouseEvent.button 里的右键
 export const RIGHT_LONGPRESS_MS = 220;  // 按住超过这个时间就算长按（进入拖动）
 export const RIGHT_DRAG_SLOP = 6;       // 按下后移动超过这个像素数也立即算拖动，不必等满长按时间
 
+// --- 触屏：长按呼出画笔圆环，轻点切换方块状态，拖动平移 ---
+// 比右键的 220ms 长一些：手指比鼠标抖，太短会把"轻点"误判成长按
+export const TOUCH_LONGPRESS_MS = 420;
+export const TOUCH_DRAG_SLOP = 8;       // 移动超过这个像素数就判定为拖动（平移），不再当作轻点
+
 // --- 颜色（与 styles.css 中的 CSS 变量保持一致）---
 function readColorVar(style, name, fallback) {
     const value = style.getPropertyValue(name).trim();
@@ -89,3 +94,5 @@ export const BLACK_VALUE = 0;
 export const PRESET_MAX = 15;
 export const RGB_MIN = PRESET_MAX + 1;
 export const RGB_MASK = 0x00ffffff;
+/** 稠密状态 / 本地缓存里每格占的字节数（24bit） */
+export const CELL_BYTES = 3;
