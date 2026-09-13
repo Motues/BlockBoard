@@ -14,8 +14,7 @@ import { closeColorPicker, openColorPicker } from './picker.mjs';
 import {
     brushRingEl,
     clamp,
-    closeIcon,
-    menuIcon,
+    menuButton,
     optionsPanel,
     viewport
 } from './shared.mjs';
@@ -133,10 +132,6 @@ export function toggleOptionsPanel() {
 
         // 2. 移除 hidden 类触发 opacity 和 transform 渐变
         optionsPanel.classList.remove('hidden');
-
-        // 3. 切换按钮图标
-        menuIcon.style.display = 'none';
-        closeIcon.style.display = 'block';
     } else {
         // 1. 添加 hidden 类触发 opacity 和 transform 渐变
         optionsPanel.classList.add('hidden');
@@ -147,11 +142,12 @@ export function toggleOptionsPanel() {
                 optionsPanel.style.visibility = 'hidden';
             }
         }, PANEL_TRANSITION_MS);
-
-        // 3. 立即切换按钮图标
-        menuIcon.style.display = 'block';
-        closeIcon.style.display = 'none';
     }
+
+    // 3. 切换按钮图标：只改 class，「...」与「X」交给 CSS 做交叉淡入淡出 + 旋转，
+    //    不再用 display 硬切（硬切会跳一帧，看起来不丝滑）
+    menuButton.classList.toggle('open', panelOpen);
+    menuButton.setAttribute('aria-expanded', panelOpen ? 'true' : 'false');
 }
 
 // 截图后自动关闭选项面板

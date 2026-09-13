@@ -16,8 +16,6 @@ export const ctx = canvas.getContext('2d');
 
 export const menuButton = document.getElementById('menu-button');
 export const optionsPanel = document.getElementById('options-panel');
-export const menuIcon = document.getElementById('menu-icon');
-export const closeIcon = document.getElementById('close-icon');
 
 export const brushRingEl = document.getElementById('brush-ring');
 export const colorPickerEl = document.getElementById('color-picker');

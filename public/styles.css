@@ -44,8 +44,9 @@ body {
     box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
     text-align: center;
     pointer-events: auto;
-    /* 保持基础过渡 */
-    transition: opacity 0.3s, transform 0.3s;
+    /* 保持基础过渡；visibility 也必须一起过渡，
+       否则 .hidden 里的 visibility: hidden 会立刻生效，关闭弹窗时看不到淡出/缩小的过程 */
+    transition: opacity 0.26s ease-out, transform 0.26s ease-out, visibility 0.26s;
 }
 
 /* 默认居中样式只给顶部和底部 */
@@ -129,6 +130,37 @@ h1 {
     color: var(--text-color);
 }
 
+/* 菜单按钮里的「...」与「X」：两个图标叠在一起做交叉淡入淡出 + 旋转，
+   不再用 display 硬切（硬切看起来就是一帧跳变，不丝滑） */
+#menu-button svg {
+    position: absolute;
+    inset: 0;
+    width: 60%;
+    height: 60%;
+    margin: auto;
+    transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+#menu-button #menu-icon {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+}
+
+#menu-button #close-icon {
+    opacity: 0;
+    transform: rotate(-75deg) scale(0.7);
+}
+
+#menu-button.open #menu-icon {
+    opacity: 0;
+    transform: rotate(75deg) scale(0.7);
+}
+
+#menu-button.open #close-icon {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+}
+
 /* 只在移动端出现的元素（例如选项面板里的「设置」项） */
 .mobile-only {
     display: none;
@@ -152,6 +184,8 @@ h1 {
     right: 20px;
     left: auto;
     transform: none;
+    /* 收起时朝右下角（菜单按钮那一侧）缩小，看起来是从按钮里"长出来"的 */
+    transform-origin: 100% 100%;
     width: var(--footer-height);
     padding: 12px 0;
     border-radius: 30px;
@@ -167,7 +201,7 @@ h1 {
 
 #options-panel.hidden {
     opacity: 0;
-    transform: translateY(10px); 
+    transform: translateY(10px) scale(0.94);
     /* 关键：隐藏时设置 visibility: hidden，但由于设置了 transition，它会在 0.3s 后才生效 */
     visibility: hidden; 
 }
@@ -633,11 +667,80 @@ h1 {
     opacity: 1;
     visibility: visible;
     border-radius: 8px; /* 更小的圆角 */
-    transition: transform 0.3s ease-out;
+    /* 关闭时也要淡出：visibility 跟着一起过渡，滑出去之后才真正隐藏 */
+    transition: transform 0.3s ease-out, opacity 0.3s ease-out, visibility 0.3s;
 }
 
 .hint-popup:not(.hidden) {
     transform: translateX(0);
+}
+
+.hint-popup.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+/* --- Edge 鼠标手势提示（网页无法关闭浏览器自带手势，只能引导用户去设置里关）--- */
+.edge-hint {
+    left: 20px;
+    bottom: 20px;
+    z-index: 260;
+    width: min(320px, calc(100vw - 40px));
+    padding: 14px 16px;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition: opacity 0.26s ease-out, transform 0.26s ease-out, visibility 0.26s;
+}
+
+.edge-hint.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(14px);
+    pointer-events: none;
+}
+
+.edge-hint-title {
+    font-size: 0.9rem;
+    color: #fff;
+}
+
+.edge-hint-text {
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #cfcfcf;
+}
+
+/* 设置地址：可以手动选中复制，不靠剪贴板也能用 */
+.edge-hint-path {
+    font-size: 0.78rem;
+    letter-spacing: 0.5px;
+    color: #4cd137;
+    user-select: text;
+    -webkit-user-select: text;
+    word-break: break-all;
+}
+
+.edge-hint-status {
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: #9a9a9a;
+}
+
+.edge-hint-status:empty {
+    display: none;
+}
+
+.edge-hint-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
 }
 
 .hint-close {
@@ -988,10 +1091,18 @@ h1 {
     -webkit-backdrop-filter: blur(16px) saturate(130%);
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6);
+    /* 收起也要有动画：不能用 display: none 硬切（绝对定位，留在布局里不影响弹窗高度） */
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition: opacity 0.18s ease-out, transform 0.18s ease-out, visibility 0.18s;
 }
 
 .settings-select-menu.hidden {
-    display: none;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-6px);
+    pointer-events: none;
 }
 
 .settings-select-option {

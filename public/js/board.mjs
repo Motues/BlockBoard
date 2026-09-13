@@ -309,6 +309,10 @@ export function updateHover(index) {
         }
         setHoverTarget(state, 1);
     }
+
+    // 悬停目标变了必须主动申请一帧：渲染循环只在还有动画 / 缓动时才自己接着跑，
+    // 不重绘的话方块放大（尤其是取色器模式下）根本不会出现
+    requestRender();
 }
 
 // 悬停缓动还要不要继续：有缓动没走完，或者还有方块处于悬停（波浪一直在滚）

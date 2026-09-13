@@ -157,7 +157,9 @@ export function startPicking() {
     setPickMode(true);
 
     updateBrushCursor();
+    // 收起上一次的悬停放大，再按取色模式的放大比例重画一遍
     markHoverDirty();
+    requestRender();
 }
 
 export function stopPicking() {

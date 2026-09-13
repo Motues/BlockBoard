@@ -2,7 +2,7 @@
 // 模块依赖方向（不出现环）：
 //   shared ← board / camera / render / interactions / ring / picker / connection
 //   模块之间：ring → picker → brush → cursor → shared
-//             i18n ← settings ← devtools（toast 独立，谁都能用）
+//             i18n ← settings ← devtools（toast / edge-hint 独立，只依赖 i18n）
 
 import { getBrushRgb, loadBrush, loadRecentColors } from './brush.mjs';
 import { updateBrushCursor } from './cursor.mjs';
@@ -17,6 +17,7 @@ import {
 } from './ring.mjs';
 import { bindUiEvents, initConnection } from './connection.mjs';
 import { bindDevEvents } from './devtools.mjs';
+import { initEdgeHint } from './edge-hint.mjs';
 import { bindSettingsEvents } from './settings.mjs';
 import { resetView, resizeCanvas, watchDevicePixelRatio } from './camera.mjs';
 import { saveAsImage } from './render.mjs';
@@ -52,6 +53,9 @@ initConnection();
 bindUiEvents();
 bindDevEvents();
 bindSettingsEvents();
+
+// Edge 的鼠标手势会抢走右键拖动（网页关不掉），桌面版 Edge 上提示一次
+initEdgeHint();
 
 // 首屏
 renderRecentColors();

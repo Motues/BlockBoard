@@ -53,6 +53,13 @@ const DICT = {
         'picker.done': 'Done',
         'picker.eyedropper': 'Eyedropper',
 
+        'edgeHint.title': 'Edge mouse gestures block right-drag',
+        'edgeHint.text': 'A web page cannot turn off the mouse gestures built into Edge, so holding the right button to drag the board is taken over by the browser. Open the mouse gesture settings below (or paste the address into the address bar) and turn off "Enable mouse gestures"; newer builds also let you add this site to the gesture block list.',
+        'edgeHint.open': 'Open Edge settings',
+        'edgeHint.dismiss': 'Got it',
+        'edgeHint.copied': 'Address copied. If no settings tab opened, paste it into the address bar.',
+        'edgeHint.copyFailed': 'Copy failed — type the address above into the address bar.',
+
         'settings.title': 'Settings',
         'settings.language': 'Language',
         'settings.languageHint': 'The first visit follows your browser language; the choice made here wins from then on.',
@@ -141,6 +148,13 @@ const DICT = {
         'picker.done': '完成',
         'picker.eyedropper': '取色器',
 
+        'edgeHint.title': 'Edge 鼠标手势会占用右键拖动',
+        'edgeHint.text': '网页无法关闭 Edge 自带的鼠标手势，右键长按拖动会被浏览器抢走，棋盘就拖不动了。打开下面的鼠标手势设置页（或把地址粘贴到地址栏），关掉「启用鼠标手势」；较新版本也可以把本站加入手势阻止列表。',
+        'edgeHint.open': '打开 Edge 设置',
+        'edgeHint.dismiss': '知道了',
+        'edgeHint.copied': '已复制设置地址。若没有打开设置页，请粘贴到地址栏。',
+        'edgeHint.copyFailed': '复制失败，请把上面的地址手动输入地址栏。',
+
         'settings.title': '设置',
         'settings.language': '语言',
         'settings.languageHint': '首次进入按浏览器语言自动选择，之后以这里的选择为准。',
@@ -227,6 +241,13 @@ const DICT = {
         'picker.recent': '最近使用',
         'picker.done': '完成',
         'picker.eyedropper': '取色器',
+
+        'edgeHint.title': 'Edge 滑鼠手勢會佔用右鍵拖曳',
+        'edgeHint.text': '網頁無法關閉 Edge 內建的滑鼠手勢，長按右鍵拖曳會被瀏覽器接管，棋盤就拖不動了。開啟下面的滑鼠手勢設定頁（或把網址貼到網址列），關閉「啟用滑鼠手勢」；較新版本也可以把本站加入手勢封鎖清單。',
+        'edgeHint.open': '開啟 Edge 設定',
+        'edgeHint.dismiss': '知道了',
+        'edgeHint.copied': '已複製設定網址。若沒有開啟設定頁，請貼到網址列。',
+        'edgeHint.copyFailed': '複製失敗，請把上面的網址手動輸入網址列。',
 
         'settings.title': '設定',
         'settings.language': '語言',
@@ -315,6 +336,13 @@ const DICT = {
         'picker.done': '完了',
         'picker.eyedropper': 'スポイト',
 
+        'edgeHint.title': 'Edge のマウスジェスチャーが右ドラッグを奪います',
+        'edgeHint.text': 'Edge 内蔵のマウスジェスチャーは Web ページからは無効にできません。右ボタンを押したままドラッグするとブラウザーに取られて、ボードを動かせません。下のマウスジェスチャー設定ページを開いて（またはアドレスをアドレスバーに貼り付けて）「マウスジェスチャーを有効にする」をオフにしてください。新しいビルドではこのサイトをブロックリストに追加できます。',
+        'edgeHint.open': 'Edge の設定を開く',
+        'edgeHint.dismiss': '了解',
+        'edgeHint.copied': '設定のアドレスをコピーしました。設定ページが開かない場合はアドレスバーに貼り付けてください。',
+        'edgeHint.copyFailed': 'コピーできませんでした。上のアドレスをアドレスバーに入力してください。',
+
         'settings.title': '設定',
         'settings.language': '言語',
         'settings.languageHint': '初回はブラウザの言語に従い、以降はここで選んだ言語が使われます。',
@@ -401,6 +429,13 @@ const DICT = {
         'picker.recent': '최근 사용',
         'picker.done': '완료',
         'picker.eyedropper': '스포이트',
+
+        'edgeHint.title': 'Edge 마우스 제스처가 오른쪽 드래그를 가로챕니다',
+        'edgeHint.text': 'Edge에 내장된 마우스 제스처는 웹 페이지에서 끌 수 없습니다. 오른쪽 버튼을 누른 채 드래그하면 브라우저가 가로채서 보드를 움직일 수 없습니다. 아래 마우스 제스처 설정 페이지를 열고(또는 주소를 주소 표시줄에 붙여넣고) 「마우스 제스처 사용」을 끄세요. 최신 버전에서는 이 사이트를 차단 목록에 추가할 수도 있습니다.',
+        'edgeHint.open': 'Edge 설정 열기',
+        'edgeHint.dismiss': '확인',
+        'edgeHint.copied': '설정 주소를 복사했습니다. 설정 페이지가 열리지 않으면 주소 표시줄에 붙여넣으세요.',
+        'edgeHint.copyFailed': '복사하지 못했습니다. 위 주소를 주소 표시줄에 직접 입력하세요.',
 
         'settings.title': '설정',
         'settings.language': '언어',

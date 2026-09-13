@@ -66,6 +66,13 @@ passed and before the cursor moved ~6 px pops the ring up at the cursor, while *
 moving right away) pans the board instead, so the right button doubles as a drag handle on desktop.
 A quick left click paints / erases a block; on desktop the left button no longer pans the view.
 
+> **On Edge:** the built-in *mouse gestures* take over right-button dragging, and a web page cannot turn
+> them off, so holding the right button no longer pans the board. On desktop Edge a small card appears in
+> the bottom-left corner on the first visit: its button tries to open the mouse gesture settings
+> (`edge://settings/appearance/browserBehavior/mouseGestures`), and the address is also copied to the
+> clipboard (shown on the card) in case the browser blocks it. Turn off *Enable mouse gestures* there —
+> newer builds also let you add this site to the gesture block list.
+
 The ring holds the preset colors; the rainbow circle in the middle picks **any 24-bit RGB color**: it
 opens a picker with a saturation/brightness area, a hue slider and a hex field (`#rgb` / `#rrggbb`).
 The picked color is applied to the brush immediately, and the choice is remembered in `localStorage`.

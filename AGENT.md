@@ -31,6 +31,7 @@
 | `connection.mjs` | socket 事件与全局 UI 绑定 |
 | `i18n.mjs` | 语言状态、`t()`、`applyStaticI18n()`、`onLangChange()` |
 | `settings.mjs` | 居中的设置弹窗 + 浏览器本地的开发者密码存取 |
+| `edge-hint.mjs` | 桌面版 Edge 的鼠标手势提示卡片（含跳转 Edge 设置的按钮） |
 | `toast.mjs` | 底部居中的浮层提示，开发者工具与设置共用 |
 
 ### 依赖方向
@@ -40,20 +41,63 @@
   用 `onBrushChange` / `onLangChange` 之类的监听器接收变化。
 - 功能模块之间的链只有一条：`ring → picker → brush → cursor`。
 - `i18n ← settings ← devtools`：设置弹窗依赖 i18n，开发者工具依赖设置里的密码存取。
+  `toast` 与 `edge-hint` 是独立叶子，只依赖 `i18n`。
 - `interactions` 不 import `devtools`：画布上的左键按下 / 移动 / 松手 / 右键通过 `shared.mjs` 的
   `devEvents`（一个 `EventTarget`）转发成 `leftdown` / `leftmove` / `leftup` / `leftcancel` / `contextmenu`
   事件，避免 `interactions ←→ devtools` 成环。
 
+### 渲染调度（`shared.mjs`）
+
+渲染循环是"按需自转"的：`requestRender()` 只申请一帧，`frame()` 末尾只有
+`requiresMoreFrames()` 为真（有风车动画、有待确认的回包、或还有悬停缓动没走完）才会继续排下一帧，
+完全静止时循环会停下来。所以**任何改变画面状态的入口都必须自己 `requestRender()`** ——
+例如 `board.mjs` 的 `updateHover()` 在悬停目标变化后要主动申请一帧，否则
+（尤其取色器模式下的）方块放大要等到下一次别的重绘才会出现。
+
+### 显隐动画（`styles.css`）
+
+弹窗一律用 `.hidden` 类切换显隐，"看得见 → 看不见"要能渐变，必须同时满足两点：
+
+1. `.hidden` 里写 `opacity: 0` **和** `visibility: hidden`；
+2. 元素自己的 `transition` 里**包含 `visibility`**（`.glass-panel` 已经带上了）。
+
+`visibility` 是离散属性，单独过渡它时：`visible → hidden` 会在过渡结束那一刻才真正隐藏，
+`hidden → visible` 会在过渡一开始就可见 —— 正好实现"先淡出、再隐藏"。
+只写 `visibility: hidden` 而不把它放进 `transition`，关闭时元素会瞬间消失，看不到任何动画。
+
+底部菜单按钮的「…」与「X」也不能用 `display` 硬切（会跳一帧）：两个图标都绝对定位叠在按钮里，
+按钮上加 `.open` 类，由 CSS 做 `opacity` + `rotate/scale` 的交叉过渡。
+
+## Edge 鼠标手势（`edge-hint.mjs`）
+
+Edge 自带的「鼠标手势」是**浏览器级**功能：长按右键拖动会被 Edge 抢去执行手势，网页既关不掉它、
+也拿不到那次拖动，右键拖动因此无法平移棋盘。微软只在 [Microsoft Q&A](https://learn.microsoft.com/zh-cn/answers/questions/2393531/edge-3d-javascript)
+里确认"没有让网页接管右键拖动的接口"，只能由用户自己去浏览器设置里关，所以客户端只做提示：
+
+- 只在**桌面版 Edge** 上提示：UA 里含 `Edg/`（移动端是 `EdgA/` / `EdgiOS/`），
+  并且要求 `(hover: hover) and (pointer: fine)`。
+- 页面加载 `SHOW_DELAY_MS`（1.6s）后在左下角弹出卡片 `#edge-hint`；点「知道了」写
+  `blockboard-edge-gesture-hint = 1`，之后不再提示。
+- 「打开 Edge 设置」按钮：`window.open(SETTINGS_URL)`，其中 `SETTINGS_URL` 是
+  `edge://settings/appearance/browserBehavior/mouseGestures`（设置 → 外观 → 鼠标手势）。
+  `edge://` 是浏览器内部页面，网页通常打不开（Chromium 会拦掉），所以**无论成功与否**
+  都把地址复制到剪贴板，`initEdgeHint()` 还会把同一个常量写进卡片的 `.edge-hint-path`
+  （`index.html` 里那份只是脚本执行前的兜底），状态行提示"若没有打开设置页，请粘贴到地址栏"。
+- 卡片不 import 任何功能模块：静态文案走 `data-i18n`，只有点击后的状态行用
+  `t('edgeHint.copied' / 'edgeHint.copyFailed')`。
+
 ## 国际化（`i18n.mjs`）
 
-- 键名固定为 `blockboard-language`，只支持 `zh` / `en` 两个值。
-- 检测规则：先用 `localStorage` 里的值；没有（或值不合法）就看 `navigator.language`，
-  **只有 `zh` 开头才是中文，其余一律英文**，并把这个结果写回 `localStorage`。
+- 键名固定为 `blockboard-language`，支持 `zh` / `zh-Hant` / `en` / `ja` / `ko` 五个值。
+- 检测规则：先用 `localStorage` 里的值；没有（或值不合法）就看 `navigator.language`：
+  中文按繁简分流（`zh-TW` / `zh-HK` / `zh-MO` / `zh-Hant*` 算繁体），日、韩各用各的，
+  **其余一律英文**，并把这个结果写回 `localStorage`。
 - 静态文字在 `index.html` 上标 `data-i18n` / `data-i18n-title` / `data-i18n-placeholder`，
   `applyStaticI18n()` 统一刷成当前语言。
 - 动态文字一律用 `t(key, params)`（`{name}` 占位符替换），**必须在渲染时调用**，不能把结果缓存成常量，
   否则切换语言不会更新。
 - 语言切换走 `onLangChange(handler)`：`ring` / `picker` / `devtools` 注册回调后重绘自己的文字。
+  静态文案（含 `edge-hint` 卡片）由 `applyStaticI18n()` 在切换时统一刷新，不需要自己注册。
 
 ## 状态格式（`src/state.ts`）
 
@@ -195,5 +239,6 @@ HTTP 端点：
 | `blockboard-language` | 界面语言（`zh` / `en`） |
 | `blockboard-brush-color` | 当前画笔：预设存编号，自定义颜色存 `#rrggbb` |
 | `blockboard-recent-colors` | 最近使用的画笔颜色（`#rrggbb` 的 JSON 数组，最新在前，最多 10 条，跳过纯黑） |
+| `blockboard-edge-gesture-hint` | 桌面版 Edge 的鼠标手势提示是否已经点过「知道了」（`1` = 不再提示） |
 
 浏览器隐私模式下 `localStorage` 可能写不进去，所有读写都包了 try/catch 并静默忽略。
