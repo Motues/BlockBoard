@@ -21,6 +21,7 @@ import { bindUiEvents, initConnection } from './connection.mjs';
 import { bindDevEvents } from './devtools.mjs';
 import { initEdgeHint } from './edge-hint.mjs';
 import { bindSettingsEvents } from './settings.mjs';
+import { initBoardLoader } from './loader.mjs';
 import { resetView, resizeCanvas, watchDevicePixelRatio } from './camera.mjs';
 import { saveAsImage } from './render.mjs';
 import { getGridState } from './board.mjs';
@@ -81,6 +82,9 @@ window.addEventListener('pagehide', flushCacheNow);
 exposeGlobals();
 buildBrushRing();
 bindPickerEvents();
+// 必须在 initConnection() 之前挂上：首屏的 init-game 可能紧接着就来，
+// 挂晚了会漏掉"棋盘已就绪"那一条，加载遮罩就一直转下去了
+initBoardLoader();
 initConnection();
 bindUiEvents();
 bindDevEvents();

@@ -3,10 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link id="favicon" rel="icon" href="./assets/logo-light.svg" type="image/svg+xml">
+    <script>
+        (function () {
+            const link = document.getElementById('favicon');
+            const mq = window.matchMedia('(prefers-color-scheme: dark)');
+
+            function apply(dark) {
+                link.href = dark ? './assets/logo-dark.svg' : './assets/logo-light.svg';
+            }
+
+            apply(mq.matches);
+            // Safari 14 以下要用 addListener
+            (mq.addEventListener ? mq.addEventListener('change', e => apply(e.matches))
+                                : mq.addListener(e => apply(e.matches)));
+        })();
+    </script>
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.5.5">
+    <link rel="stylesheet" href="styles.css?v=1.6.0">
 </head>
 <body>
+
+    <!-- 首屏加载动画：logo 居中 + 一圈圆点转着跑。
+         服务器把棋盘数据传完（init-game / state-done / sync-done）之前一直显示，
+         由 js/loader.mjs 控制显隐，隐藏后自己从 DOM 里摘掉 -->
+    <div id="board-loader" class="board-loader" role="status" aria-live="polite">
+        <div class="board-loader-inner">
+            <div class="board-loader-spinner">
+                <div class="board-loader-logo"></div>
+                <div class="board-loader-ring">
+                    <i class="board-loader-dot" style="--dot-delay: 0s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.1s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.2s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.3s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.4s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.5s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.6s"></i>
+                    <i class="board-loader-dot" style="--dot-delay: -0.7s"></i>
+                </div>
+            </div>
+            <div class="board-loader-title" data-i18n="loading.title">Loading board…</div>
+            <div id="board-loader-status" class="board-loader-status"></div>
+        </div>
+    </div>
 
     <div class="glass-panel header-ui">
         <h1>BlockBoard</h1>
@@ -180,6 +219,23 @@
         </div>
         <div class="settings-hint" data-i18n="settings.devPasswordHint">Kept in this browser only, and used to sign in when you click the developer tools button. Save it empty to forget it.</div>
 
+        <!-- 数据备份：导出 / 导入 game-config.json + 二进制存档（密码用上面那栏的开发者密码，
+             同一个密码不重复要一遍） -->
+        <div class="settings-divider"></div>
+
+        <div class="settings-label" data-i18n="transfer.title">Data backup</div>
+        <div class="settings-hint" data-i18n="transfer.hint">Packs game-config.json and the board save into one .bbx file. Importing overwrites the board and game-config.json on the server, so it uses the developer password above.</div>
+
+        <!-- 不再单独要管理员密码：服务端校验的就是上面那栏的开发者密码 -->
+        <div class="settings-transfer-actions">
+            <button type="button" id="settings-export" class="dev-btn" data-i18n="transfer.export">Export data</button>
+            <button type="button" id="settings-import-pick" class="dev-btn" data-i18n="transfer.file">Choose file…</button>
+            <button type="button" id="settings-import" class="dev-btn dev-btn-danger" data-i18n="transfer.import">Import save</button>
+            <input type="file" id="settings-import-file" class="settings-file-input" accept=".bbx,application/octet-stream">
+        </div>
+
+        <div id="settings-transfer-status" class="settings-transfer-status"></div>
+
         <div class="settings-actions">
             <button type="button" id="settings-close" class="dev-btn" data-i18n="common.close">Close</button>
             <button type="button" id="settings-save" class="dev-btn dev-btn-primary" data-i18n="common.save">Save</button>
@@ -212,6 +268,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <!-- 客户端按功能拆成几个 ES 模块，入口是 js/main.mjs -->
-    <script type="module" src="js/main.mjs?v=1.5.5"></script>
+    <script type="module" src="js/main.mjs?v=1.6.0"></script>
 </body>
 </html>

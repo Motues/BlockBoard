@@ -1179,6 +1179,55 @@ h1 {
     margin-top: 6px;
 }
 
+/* 数据备份：导出 / 导入（用上面那栏的开发者密码 + 打包文件） */
+.settings-divider {
+    height: 1px;
+    margin: 6px 0 2px;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.settings-transfer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* 文件选择框是隐藏的，「选择文件…」按钮去点它 */
+.settings-file-input {
+    display: none;
+}
+
+/* 导入是破坏性操作：第一下只变成「确认覆盖？」，颜色跟着变红提醒 */
+.dev-btn-danger {
+    background: rgba(255, 120, 120, 0.2);
+    border-color: rgba(255, 120, 120, 0.42);
+}
+
+.dev-btn-danger:hover {
+    background: rgba(255, 120, 120, 0.32);
+}
+
+.dev-btn-danger.armed {
+    background: rgba(255, 90, 90, 0.55);
+    border-color: rgba(255, 140, 140, 0.8);
+    color: #fff;
+}
+
+.settings-transfer-status {
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: #bbb;
+    word-break: break-all;
+}
+
+.settings-transfer-status.error {
+    color: #ff9d9d;
+}
+
+.settings-transfer-status.ok {
+    color: #8fe07f;
+}
+
 /* 操作结果提示（z-index 比设置弹窗更高，弹窗开着时也能看见） */
 .dev-toast {
     position: fixed;
@@ -1211,4 +1260,136 @@ h1 {
 .dev-toast-error {
     border-color: rgba(224, 92, 92, 0.6);
     color: #ffd7d7;
+}
+
+/* --- 首屏加载动画（js/loader.mjs 控制显隐）---
+   棋盘数据还在路上时盖住整个屏幕：logo 居中，外圈 8 个圆点绕圈逐个点亮往前追。
+   这层不只是好看：它同时挡住画布交互 —— 状态没到之前点方块本来也没有意义。
+   标记直接写在 index.html 里（不是脚本建出来的），所以从首屏第一帧就可见。 */
+.board-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 单层毛玻璃：这时候主线程正忙着收数据，别再叠一堆 backdrop-filter */
+    background: rgba(24, 24, 24, 0.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    transition: opacity 0.3s ease-out, visibility 0.3s;
+    animation: board-loader-in 0.25s ease-out;
+}
+
+.board-loader.hidden {
+    opacity: 0;
+    /* visibility 要一起过渡：只写 hidden 的话关闭时会瞬间消失，看不到淡出 */
+    visibility: hidden;
+    pointer-events: none;
+}
+
+@keyframes board-loader-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.board-loader-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 25px 42px 29px;
+    text-align: center;
+}
+
+.board-loader-spinner {
+    position: relative;
+    width: 112px;
+    height: 112px;
+}
+
+/* 中间的 logo：和 favicon 一样，深色主题用浅色那版 */
+.board-loader-logo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 58px;
+    height: 58px;
+    transform: translate(-50%, -50%);
+    background-image: url('assets/logo-dark.svg');
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0.92;
+}
+
+/* 外圈用 padding + border 的圆做出定位基准，边框本身透明 */
+.board-loader-ring {
+    position: absolute;
+    inset: 0;
+    padding: 2px;
+    border: 1px solid transparent;
+    border-radius: 50%;
+}
+
+.board-loader-dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%;
+    background: var(--text-color, #fff);
+    /* 每个点从"当前角"往外挪到 56px 半径处：这样不用给 8 个点各写一条 transform */
+    transform: rotate(var(--dot-a)) translateY(-56px);
+    opacity: 0.15;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.55);
+    animation: board-loader-dot 1.2s ease-in-out infinite;
+    animation-delay: var(--dot-delay, 0s);
+}
+
+/* 8 个点均分一圈（i 从 1 开始，指到 nth-child 上） */
+.board-loader-dot:nth-child(1) { --dot-a: 0deg; }
+.board-loader-dot:nth-child(2) { --dot-a: 45deg; }
+.board-loader-dot:nth-child(3) { --dot-a: 90deg; }
+.board-loader-dot:nth-child(4) { --dot-a: 135deg; }
+.board-loader-dot:nth-child(5) { --dot-a: 180deg; }
+.board-loader-dot:nth-child(6) { --dot-a: 225deg; }
+.board-loader-dot:nth-child(7) { --dot-a: 270deg; }
+.board-loader-dot:nth-child(8) { --dot-a: 315deg; }
+
+/* --dot-delay 是负的，所以加载时 8 个点的相位已经错开，一上来就是"在追"的样子 */
+@keyframes board-loader-dot {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.15; }
+    100% { opacity: 1; }
+}
+
+.board-loader-title {
+    font-size: 0.95rem;
+    color: var(--text-color, #fff);
+}
+
+.board-loader-status {
+    min-height: 1em;
+    font-size: 0.75rem;
+    color: #bbb;
+}
+
+.board-loader-status.error {
+    color: #ff9d9d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .board-loader {
+        animation: none;
+    }
+
+    /* 加载指示器本身就是在表达"还在动"，完全停掉反而看不出在加载：
+       这里放慢并去掉光晕，减少视觉冲击 */
+    .board-loader-dot {
+        animation-duration: 3s;
+        box-shadow: none;
+    }
 }

@@ -7,12 +7,13 @@
 服务端按功能拆分，依赖方向单向（`server` → `board-sync` → `board-state` → `board-persist` / `board-config`）：
 
 - `src/server.ts` —— 入口：Hono 应用、静态资源、socket.io 连线、启动与退出。只做装配。
-- `src/board-config.ts` —— 棋盘配置，以及**可下发给客户端的配置**（`publicConfig()` 剥离 `devPassword`）。敏感字段只有这一个出口。
-- `src/board-persist.ts` —— 存档读写（v3 / v2 / 老格式）与尺寸变更时的重排。
-- `src/board-state.ts` —— 棋盘状态：格子数据、epoch / `syncRev`、全盘编码快照缓存、改色、广播合并、自动存档。不 import socket。
-- `src/board-sync.ts` —— socket.io 协议：首屏状态下发（单帧 / 分块 / 增量）、实时广播、增量日志、令牌桶。
+- `src/board-config.ts` —— 棋盘配置，以及**可下发给客户端的配置**（`publicConfig()` 剥离 `devPassword`）。敏感字段只有这一个出口。配置是**运行期可变**的（数据导入会换掉它），所以别把 `rows` / `cols` 缓存成常量，用 `liveConfig` / `getTotalSquares()` / `publicConfig()` 取当前值。
+- `src/board-persist.ts` —— 存档读写（v3 / v2 / 老格式）与尺寸变更时的重排，以及把配置写回 `game-config.json`（`writeGameConfig`）。
+- `src/board-state.ts` —— 棋盘状态：格子数据、epoch / `syncRev`、全盘编码快照缓存、改色、广播合并、自动存档、导入时的整盘替换（`replaceGrid`）。不 import socket。
+- `src/board-sync.ts` —— socket.io 协议：首屏状态下发（单帧 / 分块 / 增量）、实时广播、增量日志、令牌桶、导入后的全员重同步（`resetBoardForClients`）。
+- `src/board-transfer.ts` —— 数据导出 / 导入的打包文件格式（BBEX）与导入的应用 + 回滚。
 - `src/state.ts` —— 取值约定与编解码（24bit / 4bit / 1bit、RLE、批量差量 runs、重排）。编码一律先出 `Buffer`（`encodeStateBuffer` / `encodeLegacyStateBuffer` / `encodeRleBuffer`），字符串版只是它的 base64 包装；存档是带 magic、尺寸、epoch、rev 与 deflate 的 v3 格式（`buildSaveFile` / `parseSaveFile`，v2 也能读）。
-- `src/dev-api.ts` —— 开发者工具的服务端部分：密码解析（`resolveDevPassword()`）、密码换 token、token 校验、批量改色接口。
+- `src/dev-api.ts` —— 开发者工具的服务端部分：密码解析（`resolveDevPassword()`）、密码换 token、token 校验、批量改色接口、数据导出 / 导入接口。
 - `public/` —— 纯 ES module 客户端，无打包、无构建步骤，由 `public/index.html` 通过 `public/js/main.mjs` 加载。
 - `game-config.json` —— 棋盘尺寸、端口、开发者密码、会话时长。
 - `data/` —— 运行时生成的存档目录（`board-state.dat`、`board-size.json`），不进版本库。
@@ -57,8 +58,9 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 | `picker.mjs` | 调色盘、最近颜色色块、取色器模式 |
 | `connection.mjs` | socket 事件与全局 UI 绑定；首屏状态的三条路（单帧 / 分块 / 增量）与实时广播的落地 |
 | `i18n.mjs` | 语言状态、`t()`、`applyStaticI18n()`、`onLangChange()` |
-| `settings.mjs` | 居中的设置弹窗 + 浏览器本地的开发者密码存取 |
+| `settings.mjs` | 居中的设置弹窗 + 浏览器本地的开发者密码存取 + 数据导出 / 导入（复用同一个密码，不重复输入） |
 | `state-cache.mjs` | 棋盘状态的 IndexedDB 缓存（增量同步用）、节流写盘；不 import 任何模块 |
+| `loader.mjs` | 首屏加载动画（logo + 一圈圆点绕圈，`#board-loader`）：订阅 `connection` 上报的加载状态，就绪后淡出并从 DOM 摘掉 |
 | `edge-hint.mjs` | 桌面版 Edge 的鼠标手势提示卡片（含跳转 Edge 设置的按钮） |
 | `toast.mjs` | 底部居中的浮层提示，开发者工具与设置共用 |
 
@@ -70,6 +72,9 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 - 功能模块之间的链只有一条：`ring → picker → brush → cursor`。
 - `i18n ← settings ← devtools`：设置弹窗依赖 i18n，开发者工具依赖设置里的密码存取。
   `toast` 与 `edge-hint` 是独立叶子，只依赖 `i18n`。
+- `connection → loader`（单向）：`connection.mjs` 只**上报**加载状态（`onLoadStatus`），
+  `loader.mjs` 订阅它并负责画。加载状态的信号分散在首屏的三条路里，反过来让 connection
+  去画 DOM 会把它和界面绑死，所以这里刻意做成单向的（见下文「首屏加载动画」）。
 - `state-cache.mjs` 是叶子（**不 import 任何模块**，避免和 `shared.mjs` 成环）：
   `shared.mjs` 在顶层 `await` 里读它（握手要带上缓存里的 epoch / rev），
   `connection.mjs` 往里报"状态变了"，`main.mjs` 把"当前状态 + epoch/rev"喂给它写盘。
@@ -78,6 +83,61 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 - `interactions` 不 import `devtools`：画布上的左键按下 / 移动 / 松手 / 右键通过 `shared.mjs` 的
   `devEvents`（一个 `EventTarget`）转发成 `leftdown` / `leftmove` / `leftup` / `leftcancel` / `contextmenu`
   事件，避免 `interactions ←→ devtools` 成环。
+
+### 客户端功能行为
+
+设置弹窗（`settings.mjs`）里有三块：语言下拉、开发者密码、数据备份。语言是**边选边生效**的
+（预览），点「关闭」会退回打开弹窗时的那一种；密码与数据备份的密码都不写进服务端，
+但**只有点「保存」才会落盘**（`blockboard-dev-password`）。数据备份用的是同一个开发者密码，
+不再单独要一遍（见「数据导出 / 导入」）。
+
+画笔颜色：
+
+- 预设色编号存在 `blockboard-brush-color`，自定义颜色存 `#rrggbb`（`brush.mjs`）。
+- 调色盘（`picker.mjs`）打开时的起点是"上次确认过的颜色"（`main.mjs` 里的 `primePickerBrush`），
+  不是当前画笔 —— 否则选到一半取消会把画笔也带歪。
+- **取色器**（`picker.mjs` 的 `pickCellAt`）：进入取色模式后 `cursor.mjs` 换吸管光标，
+  `board.mjs` 让指向的格子放大（用 `PICK_HOVER_SCALE`，不带平时的波浪动画），
+  旁边跟一个显示 `#rrggbb` 的小浮窗；点中方块后立刻 `stopPicking()`。
+  注意这一下**不能被当成涂色**（原因见「画布输入」里的 `pointerPhase`）。
+- **最近使用**：`blockboard-recent-colors`，`#rrggbb` 的 JSON 数组，最新在前、去重、最多 10 条、
+  跳过纯黑（黑色是擦除色）；`brush.mjs` 负责读写，`picker.mjs` 只负责渲染。
+
+画笔圆环（桌面端右键短按，阈值见「画布输入」的表格）：面板里是预设色 + 圆心彩虹圆；
+移动端圆环是**模态**的，点圆环外只收圆环、那一下不涂色。
+
+底部「菜单」按钮（`ring.mjs`）：点开选项面板，面板里是画笔颜色 / 重置视图 / 保存为图片 / 显示帮助
+（+ 移动端多一个「设置」项）。按钮上的「…」与「X」是用 `.open` 类做交叉过渡的（见「显隐动画」）。
+帮助弹窗 `#hint-popup` 在页面加载后 1 秒弹出（`connection.mjs` 的 `bindUiEvents` 里
+`setTimeout(showHintPopup, 1000)`），10 秒后自动收起；**桌面端与触屏两份文案**（见「国际化」）。
+「保存为图片」走 `render.mjs` 的 `saveAsImage`，它挂在 `window` 上供 `index.html` 的内联 `onclick` 调用。
+
+> README 里只写"右键短按呼出圆环""点彩虹圆选任意颜色"这类操作说明，具体阈值、localStorage 键、
+> 函数名都放这里 —— 用户不需要知道 220 ms 和 6 px 这两个数。
+
+### 首屏加载动画（`loader.mjs` + `index.html` 的 `#board-loader`）
+
+网络不好时，页面要等 `init-game` / `state-chunk…state-done` 把状态传完才有东西可画。
+这段时间用一层全屏遮罩盖住：**中间是 logo**（`assets/logo-dark.svg`，和 favicon 一样按
+`prefers-color-scheme` 选深浅），**外圈 8 个圆点绕圈逐个点亮往前追**（纯 CSS：
+每个点 `rotate(var(--dot-a)) translateY(-56px)` 定位，`--dot-delay` 是负值所以一上来相位就是错开的）。
+
+- 标记**直接写在 HTML 里**（不是脚本建的），所以从首屏第一帧就看得见；同时它挡住画布交互 ——
+  状态没到位之前点方块本来也没意义。
+- **状态由 `connection.mjs` 上报**（`onLoadStatus`，另一种形状 `{ type: 'receive', done, total }`
+  带分块进度，`null` = 棋盘已就绪）：`'connect'` / `'receive'` / `'sync'` / `'failed'`。
+  三条首屏路径都要上报，加新路径时别漏。`loader.mjs` 只订阅、只画，不碰 socket。
+- **最短展示时间**（`MIN_VISIBLE_MS`，700 ms）：就绪得再快也先停一下，否则一闪而过像故障。
+  `shownAt` 在**模块执行时**就记下来（`main.mjs` 一开始就 import 它），别挪到 `initBoardLoader()` 里
+  —— 那样前面同步初始化的耗时会算进去。
+- 就绪后加 `.hidden` 淡出，再自己从 DOM 里摘掉（`FADE_OUT_MS` 要和 CSS 的 transition 对齐）。
+  `.hidden` 里的 `visibility` 也必须一起过渡，理由见上面「显隐动画」。
+- 连不上时文案变成"连接不上服务器，仍在重试…"（`loading.failed`），**不会**自己消失；
+  重连成功时 `connect` 事件会把它复位成"连接中"。
+- 文案用 `t()` 动态渲染（`onLangChange(render)`），**不能**用 `data-i18n` —— 状态行会随事件变，
+  `data-i18n` 只在 `applyStaticI18n()` 时刷一次。
+- `initBoardLoader()` 必须在 `initConnection()` **之前**调用：首屏的 `init-game` 可能紧接着就来，
+  挂晚了会漏掉"棋盘已就绪"那一条，遮罩就一直转下去。
 
 ### 渲染调度（`shared.mjs`）
 
@@ -205,6 +265,12 @@ Edge 自带的「鼠标手势」是**浏览器级**功能：长按右键拖动�
 v2 存档的尺寸是精确的；旧格式存档尺寸靠字节长度推断：24bit / 4byte 布局精确，只改行数也精确；
 唯一无法还原的是「4bit 或 1bit 存档且列数也变了」，那种情况退化成逐格裁剪 / 补黑（改动前的旧行为）。
 
+> 上面这套「尺寸变了就重排」的重排逻辑有**两个**入口：启动时读盘发现尺寸不符，以及
+> 数据导入（`board-transfer.ts` 里显式调用 `regridState`，尺寸没变也走一遍把长度裁准）。
+> 两条路的行为刻意保持一致，改的时候别只改一条。
+> 另外 `gridState` 是 `Uint32Array` 的 `let` 绑定（`getGridState()`）：导入会整块换掉它，
+> 任何在模块顶层缓存数组引用的写法都会在导入后失效。
+
 ## Socket 事件（`src/board-sync.ts`）
 
 | 事件 | 方向 | 载荷 |
@@ -222,6 +288,7 @@ v2 存档的尺寸是精确的；旧格式存档尺寸靠字节长度推断：24
 | `paint-rejected` | server → client | `{ index }` —— 这次点击被令牌桶挡掉了，客户端据此把乐观风车收回去 |
 | `online-users` | server → client | 当前在线人数。**别用 `volatile`**：socket.io 在传输层正在写（例如刚发出的 CONNECT 应答）时会把 volatile 包直接丢掉，而这个人数只在连接 / 断开时各发一次，丢了就永远补不上（踩过这个坑） |
 | `update-region` | server → client | 开发者工具的批量改色广播，矩形 `{ start, runs, value, rgb, isBlack, rev }`，闭合区域 `{ indices, runs: '', value, rgb, isBlack, rev }` |
+| `board-reset` | server → client | 数据导入完成：`{ config, epoch, rev, total }`。客户端据此丢掉本地缓存与棋盘、清空待确认队列，然后主动发 `sync-request` 要全量（epoch 已经换了，服务端一定走全量那条路）。**为什么不让服务端直接推**：全量可能是几 MB 还要分块，由客户端主动要更省事，也复用了「中途断线就重新要一次」的既有逻辑 |
 
 握手：客户端用 `io({ auth: (done) => done({ caps, epoch, rev }) })` 声明能力并报上自己的状态版本。
 **必须是回调式（或对象式），不能写成 `auth: () => ({ ... })`**：socket.io-client 4.8 在
@@ -306,6 +373,12 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
 2. `game-config.json` 的 `devPassword`（`source: 'config'`）；
 3. 都没有 —— 开发者工具整个关闭，登录接口返回 503 `disabled`。
 
+数据导出 / 导入**不要求先登录开发者模式**：它们只认当次请求头 `x-dev-password`
+（`guardAdminPassword`），而这份密码与登录用的开发者密码**是同一个**（服务端只有这一份），
+失败次数也与登录共用同一份按 IP 的记录（5 次锁 5 分钟）。客户端的做法是复用设置里
+已保存的开发者密码（`getSavedDevPassword()`）：没保存过就提示先在上面填好并保存，
+**不**在数据备份这边另存一份、也不替用户偷偷登录换 token。
+
 - 登录成功下发 `crypto.randomBytes(32).toString('hex')` 的随机 token，只存在内存（`Map<token, expiresAt>`），
   有效期 `devSessionHours`（默认 8 小时，最小 1 小时），后台每 30 分钟清理一次过期项（定时器 `unref()`，不拖住进程退出）。
 - 请求带 `x-dev-token` 头（也接受 `Authorization: Bearer`）。
@@ -321,8 +394,10 @@ HTTP 端点：
 | --- | --- | --- |
 | `POST /api/dev/login` | `{ password }` | 返回 `{ ok, token, expiresAt }`；503 = 未启用，401 = 密码错误，429 = 该 IP 已锁定 |
 | `POST /api/dev/logout` | –（token 在 `x-dev-token`） | 作废 token |
-| `GET /api/dev/session` | – | `{ ok, enabled, active, config: { cols, rows } }` |
+| `GET /api/dev/session` | – | `{ ok, enabled, active, config: { cols, rows } }`（尺寸取**当前生效**的配置） |
 | `POST /api/dev/paint` | `{ x0, y0, x1, y1, color }` 或 `{ cells: [], color }` | 应用改动并返回 `{ ok, changed, range }`；503 = 未启用，401 = token 失效 |
+| `POST /api/dev/export` | –（密码在 `x-dev-password`） | 返回打包文件（`application/octet-stream` + `Content-Disposition`）；401 = 密码错误，429 = 已锁定，503 = 未启用 |
+| `POST /api/dev/import` | multipart 的 `package` 文件（密码在 `x-dev-password`，也接受表单里的 `password` 字段） | 覆盖 `game-config.json` 与存档，返回 `{ ok, configBytes, saveBytes, cols, rows, sizeChanged }`；400 = 包损坏 / 配置非法 / 存档对不上，413 = 文件太大 |
 
 `range` 是给客户端「本机先套用一遍，不等广播绕一圈」用的，所以矩形分支除了 `{ start, width, height, runs }`
 还会带上 `value` / `rgb` / `isBlack`（与广播同一套取值）—— 少了颜色字段，客户端就会用
@@ -331,6 +406,58 @@ HTTP 端点：
 
 `color` 与单元格取值同一套约定：`0` 黑、`1..15` 预设编号、`>= 16` 为 24bit RGB。
 矩形坐标会被规范化（`min` / `max`），越界返回 400 `out-of-range`。
+
+## 数据导出 / 导入（`src/board-transfer.ts`）
+
+设置弹窗里的「数据备份」：把 `game-config.json` 与 `data/board-state.dat` 打包成一个 `.bbx`
+文件，导入时由服务端解析、覆盖两者。**要密码**：就是开发者密码 —— 客户端复用设置里那份
+已保存的（`blockboard-dev-password`），不重复让用户输第二遍。
+
+BBEX 容器（小端，零依赖，不用 zip）：
+
+| 偏移 | 长度 | 内容 |
+| --- | --- | --- |
+| 0 | 4 | magic `'BBEX'` |
+| 4 | 2 | 格式版本（当前 1） |
+| 6 | 4 | config 字节数 |
+| 10 | 4 | save 字节数（0 = 包里没有存档） |
+| 14 | 32 | SHA-256(config) |
+| 46 | 32 | SHA-256(save)（save 为空时是全 0） |
+| 78 | config | `game-config.json` 文本（**导出时已剥离 `devPassword`**） |
+| … | save | `data/board-state.dat` 原样（v3 自带 deflate，不再二次压缩） |
+
+magic / 版本 / 长度之和 / 两个校验和逐项校验，任一不符都当「包已损坏」拒绝（400 `bad-package`），
+不会去猜内容。客户端的界面行为（`settings.mjs`）：
+
+- **导出**：`POST /api/dev/export` 拿到 blob 后走 `<a download>`，文件名取响应头
+  `Content-Disposition`（服务端生成 `BlockBoard-<yyyyMMdd-HHmmss>.bbx`），失败时把服务端返回的
+  `error` 码经 `TRANSFER_ERROR_KEYS` 映射成 i18n 文案。
+- **导入**：**点第一下只是确认**（按钮变成「确认覆盖？」，`armed` 类，3 秒后自动收回），
+  第二下才真的上传 —— 它会覆盖服务端数据，值得多问一次。上传用 `FormData` 的 `package` 字段。
+- 导入成功后的状态行显示新的棋盘尺寸，并且**不会**说"密码改了"或"端口改了"：
+  `devPassword` 被保留、`port` 是监听端口（改不了，要重启）。
+
+几个刻意的取舍：
+
+- **`devPassword` 既不导出也不导入**：导出文件可能被随手转发，带上管理密码等于泄露；
+  而导入别人给的包会把自己的密码换掉、被锁在开发者工具外面。`applyImport` 用
+  `PRESERVED_FIELDS` 把服务器**当前**的值（`liveConfig.devPassword`）合并进新配置。
+- **导入是实时生效的**：`writeGameConfig()` 原子写盘 → `setLiveConfig()` 换掉运行期配置 →
+  `replaceGrid()` 按新尺寸重排状态、换新 epoch、`syncRev` 归零并立刻写盘 →
+  `resetBoardForClients()` 广播 `board-reset`。所以改了尺寸**不用重启**，在线客户端也会
+  自动重同步。注意这要求 `rows` / `cols` 是运行期取值：`TOTAL_SQUARES` 常量已经删掉，
+  一律走 `getTotalSquares()`，`gridState` 也从 `const` 变成 `let` + `getGridState()`
+  （`board-sync` 的收发、`board-state` 的改色与编码都取当前引用）。
+- **失败要回滚**：先写文件再换内存；内存那步抛错就把 `game-config.json` 还原回原始字节、
+  运行期配置也退回旧的。这样不会留下「文件是新配置、服务端按旧配置跑」的半成品。
+- 尺寸范围 1..100000，总格数上限 1 亿；上传整体上限 256 MB（HTTP 层 `serverOptions.maxRequestBodySize`
+  + 应用层按 `Content-Length` 兜底）。`port` 之类改了也要重启才生效 —— 那是监听端口，
+  不可能热改，导入响应的 `sizeChanged` 只说棋盘尺寸。
+- multipart 是**手写解析**的（`parseMultipart`，按 latin1 切分，别改成 UTF-8 文本，
+  二进制会被弄坏），额外接受 `application/octet-stream` 的裸包体，方便脚本直接喂文件。
+- 客户端的重同步（`connection.mjs` 的 `board-reset` 分支）：清待确认队列 → `resetBoardGeometry()`
+  按新配置重算几何并丢空棋盘 → 清 IndexedDB 缓存 → `syncInfo` 复位 → 50 ms 后 `sync-request`。
+  **那 50 ms 不是仪式**：广播有可能比导入接口的响应先到，等一拍再要能避免赶在服务端把状态换好之前去拉。
 
 ## 批量改色的差分广播协议
 
@@ -415,10 +542,13 @@ HTTP 端点：
 | --- | --- |
 | `blockboard-dev-token` | 开发者会话 token（服务端内存里的那份的本地副本） |
 | `blockboard-dev-password` | 设置弹窗里保存的开发者密码，点开发者工具按钮时用它自动登录 |
-| `blockboard-language` | 界面语言（`zh` / `en`） |
+| `blockboard-language` | 界面语言（`zh` / `zh-Hant` / `en` / `ja` / `ko`） |
 | `blockboard-brush-color` | 当前画笔：预设存编号，自定义颜色存 `#rrggbb` |
 | `blockboard-recent-colors` | 最近使用的画笔颜色（`#rrggbb` 的 JSON 数组，最新在前，最多 10 条，跳过纯黑） |
 | `blockboard-edge-gesture-hint` | 桌面版 Edge 的鼠标手势提示是否已经点过「知道了」（`1` = 不再提示） |
+
+> 数据导出 / 导入**没有自己的密码字段**：它用的就是上面那栏的开发者密码（服务端校验的也是它），
+> 所以既不重复输入、也不多存一份。
 
 浏览器数据库（增量同步用，见 `state-cache.mjs`）：
 

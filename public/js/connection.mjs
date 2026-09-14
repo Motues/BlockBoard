@@ -10,13 +10,21 @@
 import { SWITCH_DURATION, SWITCH_SETTLE } from './config.mjs';
 import { setBrushIndex } from './brush.mjs';
 import { customValue } from './color.mjs';
-import { applyRegionPayload, applyStateChunk, getGridState, initBoard, restoreGridState, toBytes } from './board.mjs';
+import {
+    applyRegionPayload,
+    applyStateChunk,
+    getGridState,
+    initBoard,
+    resetBoardGeometry,
+    restoreGridState,
+    toBytes
+} from './board.mjs';
 import { resetView, resizeCanvas } from './camera.mjs';
 import { bindCanvasEvents } from './interactions.mjs';
 import { closeColorPicker, isColorPickerOpen, stopPicking } from './picker.mjs';
 import { closeBrushRing, showHintPopup, toggleOptionsPanel } from './ring.mjs';
 import { t } from './i18n.mjs';
-import { markCacheDirty } from './state-cache.mjs';
+import { clearCachedState, markCacheDirty } from './state-cache.mjs';
 import { toast } from './toast.mjs';
 import {
     animations,
@@ -40,6 +48,28 @@ import {
 // 分块下发进行中：实时广播先排队，等 state-done 之后按顺序回放
 let assembling = false;
 const bufferedEvents = [];
+// 已经收下的行数（首屏分块进度用）
+let receivedRows = 0;
+
+// --- 首屏加载状态上报（js/loader.mjs 订阅）---
+// 状态：'connect'（等服务器）/ 'receive'（分块下发中）/ 'sync'（在补差量）/ 'failed'（连不上）；
+// 另外两种形状：{ type: 'receive', done, total } 带分块进度；null 表示棋盘已就绪（遮罩该收了）。
+// 这里只上报，不碰 DOM —— 画那个动画是 loader.mjs 的事，省得两个模块互相依赖。
+const loadStatusListeners = [];
+
+export function onLoadStatus(handler) {
+    if (typeof handler === 'function') loadStatusListeners.push(handler);
+}
+
+function emitLoadStatus(status) {
+    for (const handler of loadStatusListeners) {
+        try {
+            handler(status);
+        } catch (error) {
+            console.error('Load status handler failed:', error);
+        }
+    }
+}
 
 // 断线提示的节流：socket.io 会不断重试，别让每次失败都弹一次
 const CONNECTION_NOTICE_INTERVAL_MS = 10000;
@@ -60,7 +90,14 @@ function showConnectionNotice(key) {
 
 // 新服务端会在 init-game 里带上 maxColorIndex，据此判断能否用颜色协议；
 // 带上 rgbSupport / stateRgb / state32 就说明它支持自定义 24bit 颜色
-export function initConnection() {
+//
+// options.rebind：整页重建之后重新挂一遍处理器（正常启动只调用一次，不传即可）
+let connectionBound = false;
+
+export function initConnection(options) {
+    if (connectionBound && !(options && options.rebind)) return;
+    connectionBound = true;
+
     socket.on('init-game', (data) => {
         const { config, maxColorIndex, rgbSupport, stateRgb, state32, stateMode, rev, epoch } = data;
         serverCaps.color = typeof maxColorIndex === 'number';
@@ -103,12 +140,17 @@ export function initConnection() {
             if (!usable) {
                 // 缓存缺失 / 尺寸对不上 / 解不出来：直接要一次完整状态
                 syncInfo.claimable = false;
+                emitLoadStatus('sync');
                 socket.emit('sync-request', {});
                 return;
             }
 
             initBoard(config, data, { resizeCanvas, resetView }, { keepState: true });
             syncInfo.claimable = true;
+
+            // 本机已经有完整状态了：服务端接下来只会发一点差量，遮罩没必要等它
+            // （这里故意跳过一次渲染，好让上面那句 initBoard 先把首帧画出来）
+            emitLoadStatus(null);
             return;
         }
 
@@ -117,6 +159,8 @@ export function initConnection() {
             assembling = true;
             // 收齐之前不能拿旧版本号去跟服务端对账（中间断线会少收几块）
             syncInfo.claimable = false;
+            receivedRows = 0;
+            emitLoadStatus({ type: 'receive', done: 0, total: Math.max(1, Number(data.chunks) || 1) });
             initBoard(config, data, { resizeCanvas, resetView });
             return;
         }
@@ -127,6 +171,7 @@ export function initConnection() {
         syncInfo.ready = true;
         syncInfo.claimable = true;
         markCacheDirty();
+        emitLoadStatus(null);
     });
 
     // 分块下发的一块：按行偏移写进棋盘。每块独立编码，收到就画（首屏能渐进出现）
@@ -136,8 +181,18 @@ export function initConnection() {
         const bytes = toBytes(chunk.data);
         if (!bytes) return;
 
-        if (applyStateChunk(bytes, chunk.encoding, Number(chunk.rowStart) || 0, Number(chunk.rows) || 0) > 0) {
+        const rows = Number(chunk.rows) || 0;
+        if (applyStateChunk(bytes, chunk.encoding, Number(chunk.rowStart) || 0, rows) > 0) {
             requestRender();
+        }
+
+        if (assembling) {
+            receivedRows += rows;
+            emitLoadStatus({
+                type: 'receive',
+                done: receivedRows,
+                total: Math.max(receivedRows, board.rows || receivedRows)
+            });
         }
     });
 
@@ -155,6 +210,7 @@ export function initConnection() {
 
         markCacheDirty();
         requestRender();
+        emitLoadStatus(null);
     });
 
     // 增量同步：服务端把日志里的状态变更重放过来
@@ -173,6 +229,33 @@ export function initConnection() {
         syncInfo.claimable = true;
         markCacheDirty();
         requestRender();
+        emitLoadStatus(null);
+    });
+
+    // 服务端导入了一份备份（可能连棋盘尺寸都换了）：手里的坐标与版本号全部作废。
+    // 清掉棋盘与本地缓存，主动要一份全量 —— epoch 已经换了，服务端一定会走全量那条路
+    socket.on('board-reset', (payload) => {
+        assembling = false;
+        bufferedEvents.length = 0;
+        receivedRows = 0;
+        clearPending();
+
+        const config = (payload && payload.config) || null;
+        resetBoardGeometry(config);
+
+        syncInfo.epoch = Number.isInteger(payload && payload.epoch) ? payload.epoch : 0;
+        syncInfo.rev = 0;
+        syncInfo.ready = false;
+        syncInfo.claimable = false;
+
+        void clearCachedState();
+        requestRender();
+
+        // 整盘都作废了，重新拉一次：遮罩重新亮起来（loader 已经摘掉的话这句是空操作）
+        emitLoadStatus('sync');
+
+        // 稍等一拍再要：万一这条广播比导入接口的响应先到，别赶在服务端把状态换好之前去要
+        setTimeout(() => socket.emit('sync-request', {}), 50);
     });
 
     // 收到服务器广播：方块的颜色值确定
@@ -213,6 +296,8 @@ export function initConnection() {
     // 光看界面分不清"服务端没连上"和"页面坏了"，所以这里明确报出来
     socket.on('connect', () => {
         connectionNoticeAt = 0;
+        // 重连成功：如果加载遮罩还在（首屏就没连上过），状态要从"连不上"退回"连接中"
+        emitLoadStatus('connect');
     });
 
     socket.on('disconnect', () => {
@@ -223,6 +308,8 @@ export function initConnection() {
     socket.on('connect_error', () => {
         setOnlineText('—');
         showConnectionNotice('conn.failed');
+        // 首屏这一下连不上时，遮罩上的文案要说清楚，不能一直转圈
+        emitLoadStatus('failed');
     });
 
     // 开发者工具的批量改色广播：服务端只发变化的部分

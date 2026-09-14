@@ -1,13 +1,19 @@
-// 开发者工具的服务端部分：密码换 token、token 校验、批量改色接口。
+// 开发者工具的服务端部分：密码换 token、token 校验、批量改色接口，
+// 以及设置弹窗里的「数据导出 / 导入」（game-config.json + 二进制存档的打包文件）。
 //
 // 认证：密码优先取环境变量 DEV_PASSWORD，其次 game-config.json 的 devPassword，
 // 两者都没有就整个关闭；校验通过下发一个内存里的随机 token（默认 8 小时过期），
 // 之后请求带 x-dev-token（或 Authorization: Bearer）。密码比对用 timingSafeEqual，
 // 并按 IP 限制失败次数。
+//
+// 导出 / 导入不要求先登录开发者模式：它们是危险操作，但只认「这一次请求里带的开发者密码」
+// （x-dev-password 头，与登录用的是同一份密码），失败同样计入按 IP 的锁定。这样设置弹窗里
+// 复用已经保存的开发者密码就能用，不必先去点开发者工具。
 
 import crypto from 'crypto';
 import type { Context, Hono } from 'hono';
-import { gameConfig } from './board-config';
+import { liveConfig } from './board-config';
+import { ImportError, applyImport, exportFileName, exportPackage, MAX_PACKAGE_BYTES } from './board-transfer';
 import { BLACK, PRESET_MAX, RGB_MASK, isCustomValue, toLegacyIndex } from './state';
 
 /** token 有效期（小时），可用 game-config.json 的 devSessionHours 覆盖 */
@@ -33,6 +39,11 @@ export interface DevApiOptions {
   paintRect: (x: number, y: number, width: number, height: number, color: number) => DevPaintResult;
   /** 把一组散落的格子（闭合区域填充）涂成某个取值 */
   paintCells: (cells: number[], color: number) => DevPaintResult;
+  /**
+   * 数据导入成功后调用：棋盘可能连尺寸一起换了，需要让所有在线客户端
+   * 丢掉本地缓存重新拉一份全量（见 board-sync.ts 的 resetBoardForClients）
+   */
+  onBoardReset?: () => void;
 }
 
 export interface DevAuthInfo {
@@ -44,7 +55,7 @@ export function resolveDevPassword(): { password: string; source: 'env' | 'confi
   const fromEnv = typeof process.env.DEV_PASSWORD === 'string' ? process.env.DEV_PASSWORD.trim() : '';
   if (fromEnv.length > 0) return { password: fromEnv, source: 'env' };
 
-  const fromConfig = typeof gameConfig.devPassword === 'string' ? gameConfig.devPassword.trim() : '';
+  const fromConfig = typeof liveConfig.devPassword === 'string' ? liveConfig.devPassword.trim() : '';
   if (fromConfig.length > 0) return { password: fromConfig, source: 'config' };
 
   return { password: '', source: 'none' };
@@ -127,6 +138,99 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
         return c.json({ ok: false, error: 'unauthorized', message: '登录已失效，请重新登录 / Session expired' }, 401);
     }
 
+    function tooLarge(c: Context) {
+        return c.json({
+            ok: false,
+            error: 'too-large',
+            message: `文件太大（上限 ${Math.floor(MAX_PACKAGE_BYTES / 1024 / 1024)} MB） / File too large`
+        }, 413);
+    }
+
+    // --- 危险操作（数据导出 / 导入）的密码校验 ---
+    // 其实就是开发者密码：设置弹窗复用同一栏（先换一次 /api/dev/login 拿 token 提交），
+    // 所以这里不要求 x-dev-token，失败次数与登录共用同一份记录，锁定期也一样。
+    function guardAdminPassword(c: Context, given: string): Response | null {
+        if (!enabled) {
+            return c.json({
+                ok: false,
+                error: 'disabled',
+                message: '未启用管理功能：请设置环境变量 DEV_PASSWORD 或 game-config.json 的 devPassword'
+            }, 503);
+        }
+
+        const ip = clientIp(c);
+
+        if (isBlocked(ip)) {
+            return c.json({ ok: false, error: 'locked', message: '尝试次数过多，请稍后再试 / Too many attempts' }, 429);
+        }
+
+        if (!given || !sameSecret(given, password)) {
+            recordFailure(ip);
+            return c.json({ ok: false, error: 'bad-password', message: '开发者密码不正确 / Wrong developer password' }, 401);
+        }
+
+        failures.delete(ip);
+        return null;
+    }
+
+    // --- multipart/form-data 解析（只处理导入需要的「一个字段 + 一个文件」）---
+    interface MultipartParts {
+        fields: Record<string, string>;
+        file: Buffer | null;
+    }
+
+    // 按 latin1（binary）切分：文件是二进制，用 UTF-8 解码会把非 ASCII 字节弄坏
+    function parseMultipart(text: string, boundary: string): MultipartParts | null {
+        const result: MultipartParts = { fields: {}, file: null };
+        const marker = '--' + boundary;
+
+        if (!text.includes(marker)) return null;
+
+        for (const piece of text.split(marker)) {
+            const part = piece.replace(/^\r?\n/, '');
+            const headerEnd = part.indexOf('\r\n\r\n');
+            if (headerEnd < 0 || part.indexOf('Content-Disposition') < 0) continue;
+
+            const headers = part.slice(0, headerEnd);
+            let body = part.slice(headerEnd + 4);
+            if (body.endsWith('\r\n')) body = body.slice(0, -2);
+
+            const name = /name="([^"]*)"/.exec(headers);
+            if (!name) continue;
+
+            if (/filename="/.test(headers)) result.file = Buffer.from(body, 'binary');
+            else result.fields[name[1]] = body;
+        }
+
+        return result;
+    }
+
+    // 从上传请求里取出打包文件；multipart 之外的形式（application/octet-stream）
+    // 就把整个请求体当包。密码只认 x-dev-password 头（multipart 的 password 字段也接受），
+    // 不接受放在文件内容里。
+    function extractUpload(contentType: string, buf: Buffer): { pkg: Buffer | null } {
+        if (!contentType.includes('multipart/form-data')) {
+            return { pkg: buf.length > 0 ? buf : null };
+        }
+
+        const boundary = /boundary="?([^";]+)"?/.exec(contentType);
+        if (!boundary) return { pkg: null };
+
+        const parsed = parseMultipart(buf.toString('binary'), boundary[1]);
+        if (!parsed) return { pkg: null };
+
+        if (parsed.file) return { pkg: parsed.file };
+
+        const inline = parsed.fields.package;
+        if (!inline) return { pkg: null };
+
+        const comma = inline.indexOf(',');
+        const head = comma >= 0 ? inline.slice(0, comma) : '';
+        const data = comma >= 0 && head.includes('base64') ? inline.slice(comma + 1) : inline;
+
+        return { pkg: Buffer.from(data, head.includes('base64') ? 'base64' : 'binary') };
+    }
+
     // 定期清理过期会话，避免内存慢慢涨
     const sweep = setInterval(() => {
         const now = Date.now();
@@ -184,8 +288,11 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
 
     // --- 会话状态 ---
     app.get('/api/dev/session', (c) => {
+        // 棋盘尺寸以**当前生效**的配置为准：数据导入可能刚把它换掉
+        const current = { cols: liveConfig.cols, rows: liveConfig.rows };
+
         if (!enabled) {
-            return c.json({ ok: true, enabled: false, active: false, config: { cols, rows } });
+            return c.json({ ok: true, enabled: false, active: false, config: current });
         }
 
         const active = authenticate(c);
@@ -193,8 +300,109 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
             ok: true,
             enabled: true,
             active,
-            config: { cols, rows }
+            config: current
         });
+    });
+
+    // --- 数据导出：game-config.json（已剥离 devPassword）+ 二进制存档 ---
+    app.post('/api/dev/export', (c) => {
+        const denied = guardAdminPassword(c, (c.req.header('x-dev-password') || '').trim());
+        if (denied) return denied;
+
+        try {
+            const { file, summary } = exportPackage();
+
+            c.header('Content-Type', 'application/octet-stream');
+            c.header('Content-Disposition', `attachment; filename="${exportFileName()}"`);
+            c.header('Cache-Control', 'no-store');
+            c.header('X-BlockBoard-Bytes', String(summary.bytes));
+            c.header('X-BlockBoard-Cells', `${summary.cols}x${summary.rows}`);
+
+            console.log(`[dev] data package exported (${summary.bytes} bytes, save ${summary.saveBytes} bytes)`);
+            return c.body(new Uint8Array(file));
+        } catch (error) {
+            console.error('[dev] data export failed:', error);
+            return c.json({ ok: false, error: 'export-failed', message: '导出失败 / Export failed' }, 500);
+        }
+    });
+
+    // --- 数据导入：解析打包文件，覆盖 game-config.json 与存档 ---
+    app.post('/api/dev/import', async (c) => {
+        const contentType = c.req.header('content-type') || '';
+        const headerPassword = (c.req.header('x-dev-password') || '').trim();
+
+        // 先按 Content-Length 拒掉过大的上传：**不要**先 await 整个请求体，
+        // 否则一个 10 GB 的请求会先在内存里炸掉（HTTP 层另有 maxRequestBodySize 兜底）
+        const declared = Number(c.req.header('content-length'));
+
+        if (Number.isFinite(declared) && declared > MAX_PACKAGE_BYTES) {
+            return tooLarge(c);
+        }
+
+        const body = await c.req.arrayBuffer();
+
+        // 没带 Content-Length（分块上传）时按实际长度兜底
+        if (body.byteLength > MAX_PACKAGE_BYTES) {
+            return tooLarge(c);
+        }
+
+        const raw = Buffer.from(body);
+
+        if (raw.length === 0) {
+            return c.json({ ok: false, error: 'empty', message: '没有收到文件 / No file uploaded' }, 400);
+        }
+
+        // 密码可以放在请求头，也可以放在 multipart 字段里（客户端用请求头）
+        let password = headerPassword;
+
+        if (!password && contentType.includes('multipart/form-data')) {
+            const boundary = /boundary="?([^";]+)"?/.exec(contentType);
+            const parts = boundary ? parseMultipart(raw.toString('binary'), boundary[1]) : null;
+            if (parts && parts.fields.password) password = parts.fields.password.trim();
+        }
+
+        const denied = guardAdminPassword(c, password);
+        if (denied) return denied;
+
+        const { pkg } = extractUpload(contentType, raw);
+
+        if (!pkg || pkg.length === 0) {
+            return c.json({ ok: false, error: 'empty', message: '没有收到文件 / No file uploaded' }, 400);
+        }
+
+        try {
+            const result = applyImport(pkg, options.onBoardReset);
+
+            if (!result) {
+                return c.json({
+                    ok: false,
+                    error: 'bad-package',
+                    message: '不是有效的 BlockBoard 备份包（文件可能损坏） / Not a valid BlockBoard package'
+                }, 400);
+            }
+
+            console.log(
+                `[dev] data package imported (config ${result.configBytes} bytes, save ${result.saveBytes} bytes, ` +
+                `${result.newCols} x ${result.newRows}${result.sizeChanged ? ', size changed' : ''})`
+            );
+
+            return c.json({
+                ok: true,
+                configBytes: result.configBytes,
+                saveBytes: result.saveBytes,
+                cols: result.newCols,
+                rows: result.newRows,
+                sizeChanged: result.sizeChanged
+            });
+        } catch (error) {
+            if (error instanceof ImportError) {
+                console.warn(`[dev] data import rejected (${error.code}): ${error.message}`);
+                return c.json({ ok: false, error: error.code, message: error.message }, 400);
+            }
+
+            console.error('[dev] data import failed:', error);
+            return c.json({ ok: false, error: 'import-failed', message: '导入失败 / Import failed' }, 500);
+        }
     });
 
     // --- 批量改色 ---

@@ -150,6 +150,31 @@ export function initBoard(config, payload, hooks, options) {
 }
 
 /**
+ * 服务端导入了一份备份之后调用：棋盘（连同尺寸）整个换了。
+ * 直接扔掉手里的格子数据、按新配置重算几何，等随后的全量下发重新填满。
+ * 绘制相关的缓存由 requestRender() 的 boardRevision 作废，这里不用管。
+ */
+export function resetBoardGeometry(config) {
+    if (config && Number.isFinite(Number(config.cols)) && Number.isFinite(Number(config.rows))) {
+        board.cols = Number(config.cols);
+        board.rows = Number(config.rows);
+        board.cellSize = Number(config.cellSize) || board.cellSize;
+        board.width = board.cols * board.cellSize + (board.cols - 1) * board.gap + board.padding * 2;
+        board.height = board.rows * board.cellSize + (board.rows - 1) * board.gap + board.padding * 2;
+    }
+
+    gridState = new Uint32Array(Math.max(0, board.cols * board.rows));
+
+    for (const timer of pendingTimers.values()) {
+        clearTimeout(timer);
+    }
+    pendingTimers.clear();
+    pendingRequests.clear();
+    animations.clear();
+    hoverStates.clear();
+}
+
+/**
  * 分块下发：把一块（若干行）的状态写进棋盘。
  * encoding 带 -bin 后缀只是说明 data 是二进制，解码方式与不带后缀的一致。
  * 返回写进去的格子数（0 表示这块没用上）

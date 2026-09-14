@@ -2,7 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { gameConfig, TOTAL_SQUARES } from './board-config';
+import { GameConfig, getTotalSquares, liveConfig } from './board-config';
 import {
   SourceDims,
   buildSaveFile,
@@ -15,6 +15,8 @@ const DATA_DIR = path.join(__dirname, '../data');
 const DATA_FILE = path.join(DATA_DIR, 'board-state.dat');
 // 存档对应的棋盘尺寸：改了 game-config.json 后靠它还原旧存档的行列数
 const META_FILE = path.join(DATA_DIR, 'board-size.json');
+/** game-config.json 在仓库根目录（dist/server.js 的上一级） */
+const CONFIG_FILE = path.join(__dirname, '../game-config.json');
 
 export interface LoadedBoard {
   state: Uint32Array;
@@ -39,25 +41,39 @@ function readSavedDims(): SourceDims | null {
 
 export function writeSavedDims(): void {
   try {
-    const meta = { cols: gameConfig.cols, rows: gameConfig.rows };
+    const meta = { cols: liveConfig.cols, rows: liveConfig.rows };
     fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2), 'utf-8');
   } catch (error) {
     console.error('Failed to write the board size file:', error);
   }
 }
 
+// 把一份配置写回 game-config.json（先写 .tmp 再 rename，原子替换）。
+// 数据导入用它落盘；其它字段原样保留，缺字段就用当前生效值补上。
+export function writeGameConfig(config: GameConfig): void {
+  const tempFile = CONFIG_FILE + '.tmp';
+  fs.writeFileSync(tempFile, JSON.stringify(config, null, 2), 'utf-8');
+  fs.renameSync(tempFile, CONFIG_FILE);
+}
+
+/** game-config.json 的绝对路径（导出时读原始文件用） */
+export function gameConfigFilePath(): string {
+  return CONFIG_FILE;
+}
+
 // 读盘：优先 v3 / v2 存档（头里有行列数与版本号，精确），
 // 都没有再按老逻辑「按字节长度猜格式」，尺寸对不上时按左上角对齐重排。
-export function loadBoardState(): LoadedBoard {
-  const fallback = { state: new Uint32Array(TOTAL_SQUARES), epoch: 0, rev: 0 };
+export function loadBoardState(filePath: string = DATA_FILE): LoadedBoard {
+  const total = getTotalSquares();
+  const fallback = { state: new Uint32Array(total), epoch: 0, rev: 0 };
 
   try {
-    if (!fs.existsSync(DATA_FILE)) {
+    if (!fs.existsSync(filePath)) {
       console.log('Using default board state');
       return fallback;
     }
 
-    const file = fs.readFileSync(DATA_FILE);
+    const file = fs.readFileSync(filePath);
     if (file.length === 0) {
       console.log('Using default board state');
       return fallback;
@@ -75,7 +91,7 @@ export function loadBoardState(): LoadedBoard {
         `${parsed.flags & 1 ? '24bit' : '4bit'}/cell, ${parsed.cols} x ${parsed.rows}, rev ${parsed.rev})`
       );
 
-      const sameSize = parsed.cols === gameConfig.cols && parsed.rows === gameConfig.rows;
+      const sameSize = parsed.cols === liveConfig.cols && parsed.rows === liveConfig.rows;
       if (sameSize) {
         return { state, epoch: parsed.epoch, rev: parsed.rev };
       }
@@ -83,12 +99,12 @@ export function loadBoardState(): LoadedBoard {
       // 尺寸变了：坐标空间整个换了，调用方会换新 epoch 并清零 rev
       console.warn(
         `Save file was made for ${parsed.cols} x ${parsed.rows}, ` +
-        `current board is ${gameConfig.cols} x ${gameConfig.rows}: ` +
+        `current board is ${liveConfig.cols} x ${liveConfig.rows}: ` +
         'keeping the top-left part and extending / cropping the bottom-right'
       );
 
       return {
-        state: regridState(state, parsed.cols, parsed.rows, gameConfig.cols, gameConfig.rows),
+        state: regridState(state, parsed.cols, parsed.rows, liveConfig.cols, liveConfig.rows),
         epoch: 0,
         rev: 0
       };
@@ -101,8 +117,8 @@ export function loadBoardState(): LoadedBoard {
     const buffer = Buffer.from(encoded, 'base64');
     const { state, source, mismatched } = decodeState(
       buffer,
-      TOTAL_SQUARES,
-      gameConfig.cols,
+      total,
+      liveConfig.cols,
       readSavedDims() || undefined
     );
 
@@ -113,12 +129,12 @@ export function loadBoardState(): LoadedBoard {
 
     console.warn(
       `Save file was made for ${fromCols} x ${fromRows}, ` +
-      `current board is ${gameConfig.cols} x ${gameConfig.rows}: ` +
+      `current board is ${liveConfig.cols} x ${liveConfig.rows}: ` +
       'keeping the top-left part and extending / cropping the bottom-right'
     );
 
     return {
-      state: regridState(state, fromCols, fromRows, gameConfig.cols, gameConfig.rows),
+      state: regridState(state, fromCols, fromRows, liveConfig.cols, liveConfig.rows),
       epoch: 0,
       rev: 0
     };
@@ -144,8 +160,8 @@ export function saveBoardState(options: SaveOptions): number {
   try {
     const file = buildSaveFile(
       options.state,
-      gameConfig.cols,
-      gameConfig.rows,
+      liveConfig.cols,
+      liveConfig.rows,
       options.epoch,
       options.rev
     );
@@ -156,7 +172,7 @@ export function saveBoardState(options: SaveOptions): number {
     writeSavedDims();
 
     console.log(
-      `Board state saved (${file.length} bytes for ${TOTAL_SQUARES} cells, rev ${options.rev}) ` +
+      `Board state saved (${file.length} bytes for ${getTotalSquares()} cells, rev ${options.rev}) ` +
       `at ${new Date().toLocaleString()}`
     );
 

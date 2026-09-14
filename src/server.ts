@@ -1,19 +1,21 @@
 // BlockBoard 服务端入口：Hono 应用、静态资源、socket.io 连线与启动。
 // 具体逻辑按功能拆分：
-//   board-config.ts   配置 + 可下发给客户端的配置（剥离 devPassword）
-//   board-persist.ts  存档读写与尺寸重排
-//   board-state.ts    棋盘状态、世代 / 版本号、快照缓存、改色
-//   board-sync.ts     socket.io 协议（首屏下发、实时广播、增量日志）
-//   dev-api.ts        开发者工具接口
+//   board-config.ts    配置 + 可下发给客户端的配置（剥离 devPassword）
+//   board-persist.ts   存档读写与尺寸重排
+//   board-state.ts     棋盘状态、世代 / 版本号、快照缓存、改色
+//   board-sync.ts      socket.io 协议（首屏下发、实时广播、增量日志）
+//   dev-api.ts         开发者工具与数据导入 / 导出接口
+//   board-transfer.ts  打包文件的格式与应用（BBEX）
 
 import { Hono } from 'hono';
-import { serve } from '@hono/node-server';
+import { createAdaptorServer } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Server } from 'socket.io';
+import http from 'http';
 import path from 'path';
-import { gameConfig, TOTAL_SQUARES } from './board-config';
+import { liveConfig, getTotalSquares } from './board-config';
 import { initBoardState, paintCells, paintRect, saveNow, startAutoSave } from './board-state';
-import { broadcastRegion, flushPending, initStateSync } from './board-sync';
+import { broadcastRegion, flushPending, initStateSync, resetBoardForClients } from './board-sync';
 import { registerDevApi, resolveDevPassword } from './dev-api';
 
 const app = new Hono();
@@ -34,9 +36,16 @@ app.use('/*', async (c, next) => {
 app.use('/*', serveStatic({ root: path.join(__dirname, '../public') }));
 
 // --- HTTP 服务 ---
-const serverInstance = serve({ fetch: app.fetch, port: gameConfig.port }, (info) => {
-  console.log(`BlockBoard run on http://localhost:${info.port}`);
-  console.log(`Current grid: ${gameConfig.cols} x ${gameConfig.rows} (Total ${TOTAL_SQUARES} squares)`);
+// 数据导入要把整个存档包（可能几十 MB）传上来，所以给上传留够空间：
+// node:http 的 maxRequestBodySize 还没进 @types/node，这里用 createAdaptorServer 显式声明
+// （HTTP 层真的拒绝时是 413；dev-api.ts 里另有一层应用层兜底）。
+const MAX_BODY_BYTES = 256 * 1024 * 1024;
+const serverOptions: Record<string, unknown> = { maxRequestBodySize: MAX_BODY_BYTES };
+const serverInstance = createAdaptorServer({
+  fetch: app.fetch,
+  // 用 node:http 的 createServer（socket.io 要挂到这个 server 上）
+  createServer: http.createServer,
+  serverOptions: serverOptions as http.ServerOptions
 });
 
 // perMessageDeflate：超过 1KB 的消息（棋盘状态）压一遍再传，几百字节的格子广播不受影响
@@ -62,11 +71,13 @@ const devPassword = resolveDevPassword();
 
 const devApi = registerDevApi(app, {
   password: devPassword.password,
-  sessionHours: Number(gameConfig.devSessionHours) || 8,
-  cols: gameConfig.cols,
-  rows: gameConfig.rows,
+  sessionHours: Number(liveConfig.devSessionHours) || 8,
+  cols: liveConfig.cols,
+  rows: liveConfig.rows,
   paintRect,
-  paintCells
+  paintCells,
+  // 数据导入成功（棋盘可能连尺寸一起换了）：让所有在线客户端丢掉缓存重新拉全量
+  onBoardReset: () => resetBoardForClients(io)
 });
 
 console.log(
@@ -77,6 +88,23 @@ console.log(
 
 // --- socket.io ---
 initStateSync(io);
+
+// --- 开始监听 ---
+// 放在状态、接口、socket 都准备好之后：早开一秒就可能有人带着
+// /api/dev/import 或一条 socket 消息打进来，而那时棋盘还没载入
+serverInstance.listen(liveConfig.port, () => {
+  console.log(`BlockBoard run on http://localhost:${liveConfig.port}`);
+  console.log(`Current grid: ${liveConfig.cols} x ${liveConfig.rows} (Total ${getTotalSquares()} squares)`);
+});
+
+serverInstance.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${liveConfig.port} is already in use — is another BlockBoard already running?`);
+    process.exit(1);
+  }
+
+  console.error('HTTP server error:', error);
+});
 
 // --- 退出前保存 ---
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

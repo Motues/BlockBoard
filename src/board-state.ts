@@ -1,7 +1,7 @@
 // 棋盘状态本体：格子数据、世代 / 版本号、快照缓存、改色与写盘。
 // 不碰 socket —— 广播在 board-sync.ts，需要广播时调用注入进来的 onFlush。
 
-import { TOTAL_SQUARES, gameConfig } from './board-config';
+import { getTotalSquares, liveConfig } from './board-config';
 import { loadBoardState, saveBoardState } from './board-persist';
 import {
   CELL_BYTES,
@@ -21,7 +21,15 @@ export interface PaintResult {
 /** 一次广播里"真的变了"的格子 */
 export type ChangedCell = [index: number, value: number];
 
-export const gridState = new Uint32Array(TOTAL_SQUARES);
+// 注意是 let：数据导入会整块换掉这个数组（棋盘尺寸可能变了）。
+// 一律用 getGridState() 取当前引用，别在模块顶层缓存它。
+// 类型显式写成 Uint32Array<ArrayBufferLike>：state.ts 里的 decoders 返回的就是它，
+// 而裸写 Uint32Array 会被推断成 Uint32Array<ArrayBuffer>（两者不能互相赋值）
+let gridState: Uint32Array<ArrayBufferLike> = new Uint32Array(getTotalSquares());
+
+export function getGridState(): Uint32Array<ArrayBufferLike> {
+  return gridState;
+}
 
 export let stateRev = 0;
 export let syncRev = 0;
@@ -111,13 +119,13 @@ export function encodeCompactState(): { encoding: 'rle' | 'dense'; data: Buffer 
   const snap = currentSnapshot();
   if (!snap.rle) snap.rle = encodeRleBuffer(gridState);
 
-  return snap.rle.length <= TOTAL_SQUARES * CELL_BYTES
+  return snap.rle.length <= getTotalSquares() * CELL_BYTES
     ? { encoding: 'rle', data: snap.rle }
     : { encoding: 'dense', data: getDenseState() };
 }
 
 export function isValidIndex(index: number): boolean {
-  return Number.isInteger(index) && index >= 0 && index < TOTAL_SQUARES;
+  return Number.isInteger(index) && index >= 0 && index < getTotalSquares();
 }
 
 // --- 改色 ---
@@ -147,9 +155,10 @@ export function paintRect(
   color: number
 ): PaintResult {
   const changes: CellChange[] = [];
+  const cols = liveConfig.cols;
 
   for (let row = 0; row < height; row++) {
-    const rowStart = (y + row) * gameConfig.cols + x;
+    const rowStart = (y + row) * cols + x;
     for (let col = 0; col < width; col++) {
       applyCell(rowStart + col, color, changes);
     }
@@ -160,7 +169,7 @@ export function paintRect(
   touchState();
 
   // start 必须一起发出去：runs 里的跳过计数是相对上一段结束的，客户端少了基准会从 0 套用
-  const start = y * gameConfig.cols + x;
+  const start = y * cols + x;
   const runs = encodeChangedRuns(changes, start);
   onRegionPaint(color, { start, runs });
 
@@ -232,6 +241,44 @@ export function saveNow(): void {
     stateRev,
     savedRev
   });
+}
+
+/**
+ * 数据导入：把整块棋盘换成新的状态。
+ *
+ * `state` 必须已经按**当前配置**的尺寸重排好（重排由调用方用 regridState 做，
+ * 因为导入的存档尺寸可能是另一个）。这里会换一个新的 epoch 作废所有客户端的本地缓存，
+ * 并把 rev 归零（旧版本号的差量在新棋盘上毫无意义），然后立刻写盘。
+ */
+export function replaceGrid(state: Uint32Array<ArrayBufferLike>): void {
+  const total = getTotalSquares();
+
+  if (state.length !== total) {
+    throw new Error(`imported state has ${state.length} cells, expected ${total}`);
+  }
+
+  // 排队中的单格广播属于**旧**棋盘：先发出去再换状态（写盘前也需要它，
+  // 存档里的 rev 必须与状态配套）
+  onFlush();
+
+  gridState = state;
+  epoch = newEpoch();
+  syncRev = 0;
+
+  // 旧快照由 stateRev 作废；旧待广播队列里的下标在新棋盘上可能已经越界
+  pendingSquares.clear();
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  touchState();
+
+  saveNow();
+
+  console.log(
+    `Imported board state applied: ${liveConfig.cols} x ${liveConfig.rows}, ` +
+    `epoch ${epoch}, rev ${syncRev}, stateRev ${stateRev}`
+  );
 }
 
 export function startAutoSave(intervalMs: number): NodeJS.Timeout {

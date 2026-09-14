@@ -2,14 +2,14 @@
 // 状态本身在 board-state.ts，这里只负责"怎么发"。
 
 import type { Server, Socket } from 'socket.io';
-import { TOTAL_SQUARES, gameConfig, publicConfig } from './board-config';
+import { liveConfig, publicConfig, getTotalSquares } from './board-config';
 import {
   bumpSyncRev,
   encodeCompactState,
   epoch,
   getDenseState,
+  getGridState,
   getLegacyState,
-  gridState,
   isValidIndex,
   paintSquare,
   queueSquareUpdate,
@@ -172,7 +172,7 @@ function basePayload() {
 }
 
 function sendChunkedState(socket: Socket, capSet: Set<string>): void {
-  const { cols, rows } = gameConfig;
+  const { cols, rows } = liveConfig;
   const binary = capSet.has('bin');
   const rowsPerChunk = Math.max(1, Math.min(rows, Math.floor(CHUNK_TARGET_BYTES / (cols * CELL_BYTES))));
   const chunks = Math.max(1, Math.ceil(rows / rowsPerChunk));
@@ -193,7 +193,7 @@ function sendChunkedState(socket: Socket, capSet: Set<string>): void {
     const rowStart = seq * rowsPerChunk;
     const count = Math.min(rowsPerChunk, rows - rowStart);
     const cells = count * cols;
-    const chunk = gridState.subarray(rowStart * cols, rowStart * cols + cells);
+    const chunk = getGridState().subarray(rowStart * cols, rowStart * cols + cells);
     const rle = encodeRleBuffer(chunk);
     const useRle = rle.length <= cells * CELL_BYTES;
     const data = useRle ? rle : encodeStateBuffer(chunk);
@@ -297,8 +297,26 @@ function brushValue(payload: { brush?: number; rgb?: number }): number | null {
 
 /** 与客户端一致：格子和画笔同色 → 擦成黑色，否则涂成画笔颜色 */
 function toggleTo(index: number, value: number): void {
-  paintSquare(index, gridState[index] === value ? BLACK : value);
+  paintSquare(index, getGridState()[index] === value ? BLACK : value);
   queueSquareUpdate(index);
+}
+
+/**
+ * 数据导入之后调用：棋盘状态（可能连尺寸）整个换过了，所有在线客户端手里的
+ * 都成了旧世界的坐标。发一条 board-reset，客户端据此丢掉本地缓存、清空棋盘，
+ * 主动 sync-request 要一份全量（epoch 已经换了，服务端一定走全量那条路）。
+ *
+ * 为什么不让服务端直接推全量：全量可能是几 MB（还要分块），由客户端主动要
+ * 更符合现有的协议 —— 顺便也复用了「中途断线就重新要一次」的那套逻辑。
+ */
+export function resetBoardForClients(io: Server): void {
+  // 旧棋盘排队中的单格广播已经没有意义了（下标在新棋盘上可能越界）
+  takePendingSquares();
+  patchLog.length = 0;
+  patchLogBytes = 0;
+
+  io.emit('board-reset', { config: publicConfig(), epoch, rev: syncRev, total: getTotalSquares() });
+  console.log(`[sync] board reset broadcast to ${io.sockets.sockets.size} client(s)`);
 }
 
 export function initStateSync(io: Server): void {
