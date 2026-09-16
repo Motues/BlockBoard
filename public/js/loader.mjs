@@ -1,4 +1,4 @@
-// 首屏加载动画：logo 居中 + 一圈圆点转着跑（见 styles.css 的 .board-loader）。
+// 首屏加载动画：logo 居中 + 外面一圈 3×3 圆点胀缩（见 styles.css 的 .loader / .board-loader）。
 //
 // 为什么把它单独拆一个模块：它是唯一一个"在棋盘状态到位之前就必须看得见"的界面，
 // 而棋盘状态到位的信号分散在 connection.mjs 的三条路（inline / chunks / client）里。

@@ -84,7 +84,7 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 | `i18n.mjs` | 语言状态、`t()`、`applyStaticI18n()`、`onLangChange()` |
 | `settings.mjs` | 居中的设置弹窗 + 浏览器本地的开发者密码存取 + 数据导出 / 导入（复用同一个密码，不重复输入） |
 | `state-cache.mjs` | 棋盘状态的 IndexedDB 缓存（增量同步用）、节流写盘；不 import 任何模块 |
-| `loader.mjs` | 首屏加载动画（logo + 一圈小圆点，收缩波绕圈传并整圈旋转，`#board-loader`）：订阅 `connection` 上报的加载状态，就绪后淡出并从 DOM 摘掉 |
+| `loader.mjs` | 首屏加载动画（logo + 外面一圈 3×3 圆点胀缩，`#board-loader`）：订阅 `connection` 上报的加载状态，就绪后淡出并从 DOM 摘掉 |
 | `edge-hint.mjs` | 桌面版 Edge 的鼠标手势提示卡片（含跳转 Edge 设置的按钮） |
 | `toast.mjs` | 底部居中的浮层提示，开发者工具与设置共用 |
 
@@ -142,20 +142,51 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 ### 首屏加载动画（`loader.mjs` + `index.html` 的 `#board-loader`）
 
 网络不好时，页面要等 `init-game` / `state-chunk…state-done` 把状态传完才有东西可画。
-这段时间用一层全屏遮罩盖住：**中间是 logo**（`assets/logo-dark.svg`，和 favicon 一样按
-`prefers-color-scheme` 选深浅），**外圈 16 个小圆点**（`index.html` 里行内的 `--dot-a` / `--dot-i`
-摆位置与序号，半径 50px、直径 5px），观感照浏览器标签页上那个转圈图标做：
+这段时间用一层全屏遮罩盖住，中间就是**一圈 3×3 的圆点在胀缩** —— 就是 `.loader` 那一段。
+（原来中间还压着一个 `logo-dark.svg`，已经去掉了：现在点阵自己占据正中。）
 
-- **收缩波**：每个点沿半径往里缩一下再弹回外圈（`board-loader-pulse`，`scale` 配合
-  `translateY(-50px)` —— `transform` 从右往左算，`scale` 会把位移一起缩放，
-  所以点是真的"往圆心靠"而不是原地缩小），按 `--dot-i * -0.048s` 依次错开，
-  收缩的地方绕着圈传（`board-loader-glow` 同时压明暗，两个动画的周期与错开必须一致）。
-- **整圈旋转**：`.board-loader-ring` 一起转（`board-loader-spin`，2s，缓入缓出）。
-- 16 个点间距足够（外圈 50px 半径上中心距约 19.6px），点又小，所以看着是一圈**分开的点**，
-  不会糊成一条实心环 —— 加大点径或半径时要一起算间距，别让它们连起来。
-- 动的只有 `transform` 和 `color`，都在合成层上，主线程正忙也不掉帧。
-  **别用 `@property` 注册自定义属性去做关键帧插值**：`transform` 里的 `var()` 会在关键帧里
-  被当成固定值（试过 `--dot-a` / `--dot-r` 那套写法，动画整帧不动），要么写死、要么用 `scale`。
+- **`styles.css` 里 `.loader` + `@keyframes l26` 是外部示例原样搬来的**，
+  `index.html` 里就一个 `<div class="loader"></div>`。**要改动画先照着示例改，别自己另起一套** ——
+  这个片段本身就是能跑的成品，改之前先确认"确实非改不可"。
+- 示例的几何（九条偏移、spread、`border-radius`、时长）**一字未改**；
+  相对示例动了三处，每一处上面都有注释写明理由：
+  - `color: #000 → inherit`（黑底上看不见）。点是**每条投影各自带色**的，
+    所以这句现在只是示例留下的兜底（见下面"九个点各有各的颜色"）。
+  - `height: 4px` **必须加**：示例把 box 当行内元素用，而这个 div 是块级 —— 块级的 `width`
+    管不住高度，它会先撑满父容器、再由 `aspect-ratio: 1` 把高度也撑起来，
+    于是九条 `box-shadow` 是从一个几十 px 的大盒子开始量的，整片点阵直接偏掉。
+    写死 height 之后 box 才真是"4px 的一个点"。
+  - `translateX(-38px) → translate(-7px, 31px)`：**居中全靠这一行**，且两个轴都要管
+    （所以从 `translateX` 变成 `translate`），推导见下一条。
+- **九点阵不是九个元素**，是一个 4px 的透明 box + 九条 `box-shadow`：
+  x 分量 19 / 38 / 57、y 分量 -19 / 0 / 19，中位那档没写（那正是 box 自己，而它没有背景）。
+  点径 = `4px + spread × 2`，所以 `spread 0px → 4px`、`spread 5px → 14px`，
+  关键帧就是在 4px 和 14px 之间来回插值 —— **点本身在变大变小**（这正是"呼吸"）。
+- **九个点各有各的颜色**，顺序 = 左→右、上→下，用的就是 `logo-dark.svg` 的配色：
+
+  | | 左 | 中 | 右 |
+  | --- | --- | --- | --- |
+  | 上 | `#e7e7eb` | `#62c976` | `#e7e7eb` |
+  | 中 | `#cf8e15` | `#e7e7eb` | `#599bfc` |
+  | 下 | `#e7e7eb` | `#e7e7eb` | `#c084fc` |
+
+  颜色写在**每条 box-shadow 自己身上**（`<x> <y> <blur> <spread> <color>`），
+  不能靠 `color` 继承 —— 继承了就九点同色。代价是 7 处（基础态 + 6 个关键帧）
+  各写一遍，**改颜色要 7 处一起改**。`.loader` 里那句 `color: inherit` 现在只是示例留下的兜底。
+- **别把它当成描边**：`box-shadow` 从元素边缘往外长，填的是投影自己的形状；
+  之前有一版用"透明方块 + 只加 spread 的投影"做，看着就像一圈白描边在闪，
+  跟这里"底下一个实在的点在胀"不是一回事。
+- **居中怎么来的**（改动画前先看这段，因为这几个数互相咬合）：
+  整个动画里点阵的包围盒是 `x 19..71`、`y -19..33`（按九条的偏移 + 最大 14px 的点算；
+  列偏移全是正的、只有顶行那个 `-19` 是负的，所以**包围盒并不以 box 为中心**），
+  两个方向都是 52px，中心落在 element 左上角 +(45, 7) 处。
+  再配合 `.board-loader-box`（76px 的定位盒，50% + 负 margin 摆到 spinner 正中，
+  盒心在 spinner 正中、也就是盒坐标的 (38, 38)），让包围盒中心对上盒心就能解出：
+  `element 左上角 = (38 - 45, 38 - 7) = (-7, 31)` —— 这正是写进 CSS 的
+  `translate(-7px, 31px)`。7 帧逐帧验过，整片包围盒中心与 spinner 中心偏差为 0。
+  一句话：**动点径、任何一档偏移或 spread，都要按这个式子重算 translate，别照抄。**
+- 动的只有 `box-shadow`；点小、数量少，主线程正忙时够用。
+- `loader.mjs` 与这套标记无关（它只管显隐/文案），换动画不用动脚本。
 
 - 标记**直接写在 HTML 里**（不是脚本建的），所以从首屏第一帧就看得见；同时它挡住画布交互 ——
   状态没到位之前点方块本来也没意义。
@@ -171,8 +202,8 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
   重连成功时 `connect` 事件会把它复位成"连接中"。
 - 文案用 `t()` 动态渲染（`onLangChange(render)`），**不能**用 `data-i18n` —— 状态行会随事件变，
   `data-i18n` 只在 `applyStaticI18n()` 时刷一次。
-- `prefers-reduced-motion: reduce` 下**不停掉**（它本身就在表达"还在动"），只是把整圈旋转与
-  收缩波一起放慢到 1/4 速；改动画周期时记得同步改那两条 `animation-duration`。
+- `prefers-reduced-motion: reduce` 下**不停掉**（它本身就在表达"还在动"），只是把点阵放慢到
+  1/4 速（2s → 8s）。
 - `initBoardLoader()` 必须在 `initConnection()` **之前**调用：首屏的 `init-game` 可能紧接着就来，
   挂晚了会漏掉"棋盘已就绪"那一条，遮罩就一直转下去。
 

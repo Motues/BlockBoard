@@ -1317,88 +1317,109 @@ h1 {
     text-align: center;
 }
 
+/* 点阵的颜色是**每条投影自己带的**（见 .loader 的 box-shadow，九条各一个色，
+   顺序 = 左→右、上→下）。所以这里不再统一上色，文字部分用各自的默认色。 */
 .board-loader-spinner {
     position: relative;
     width: 112px;
     height: 112px;
 }
 
-/* 中间的 logo：和 favicon 一样，深色主题用浅色那版 */
-.board-loader-logo {
+/* --- 加载动画：下面这一段是外部示例原样搬过来的 -------------------------------------------------
+   除了 color / height / transform 三行（原因见各自上面那条注释），其余连缩进都保持原样。
+   坐标系：box 本身是**中心那一个点**，九个点全靠 box-shadow 的偏移摆出来 ——
+   x 用 19 / 38 / 57、y 用 -19 / 0 / 19，所以中位那个 `0 0` 没有写
+   （那正是 box 自己，而 box 没有背景，于是看到的正好是外圈八个点）。
+   点径 = 4px + spread × 2：spread 0px 是 4px 的小点，5px 是 14px 的大点。
+
+   注：这里刻意**不动** box、不加 border —— 这是"点本身在变大变小"，
+   不是描边（box-shadow 从元素边缘往外长，填的是投影自己的形状）。 */
+
+.loader {
+  width: 4px;
+  /* 原示例只有 width + aspect-ratio，那是把 box 当行内/绝对定位元素用的写法。
+     这里 .loader 是个普通 div（块级），块级的 width 管不住高度 —— 它会先撑满父容器（76px），
+     aspect-ratio: 1 再把高度也撑成 76px。于是 box-shadow 的偏移是**从一个 76px 的大盒子**
+     开始量的，整片点阵跟着偏（这也是"没居中"的根源）。
+     显式写死 height，box 才真是"4px 的正方点"。
+     （4px 尺度上圆和方看不出来，border-radius 照示例留着即可。） */
+  height: 4px;
+  /* 原示例是 #000。这里九条投影各自带颜色（见下面的 box-shadow），
+     所以这一行对点阵已经不起作用了 —— 只是留着当"没有颜色时的兜底"，
+     顺便保留示例的 color 声明。想改点阵颜色请改 box-shadow 里各自的十六进制值。 */
+  color: inherit;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  /* 九条投影各带自己的颜色，顺序 = 左→右、上→下，用的就是 logo-dark.svg 的配色：
+       #e7e7eb  #62c976  #e7e7eb
+       #cf8e15  #e7e7eb  #599bfc
+       #e7e7eb  #e7e7eb  #c084fc
+     颜色是"哪个点长什么样"的一部分，**不能靠外面继承**（继承了就九点同色），
+     所以 7 处（基础态 + 6 个关键帧）都各自重复写了一遍 —— 改颜色记得 7 处一起改。 */
+  box-shadow:
+    19px -19px 0 0px #e7e7eb, 38px -19px 0 0px #62c976, 57px -19px 0 0px #e7e7eb,
+    19px 0 0 5px #cf8e15, 38px 0 0 5px #e7e7eb, 57px 0 0 5px #599bfc,
+    19px 19px 0 0px #e7e7eb, 38px 19px 0 0px #e7e7eb, 57px 19px 0 0px #c084fc;
+  /* 原示例是 translateX(-38px)（那是给它自己的行内 box 算的），这里按点阵的实际包围盒重算。
+     关键在于这九个投影**不是以 box 为中心铺开的**：
+       · x 分量是 19 / 38 / 57  —— 全是正的，整片往右铺；
+       · y 分量是 -19 / 0 / 19  —— 顶行靠负的 -19 撑出去。
+     再加上 spread 最大 5px（点径 4 + 2×5 = 14px，而最大的几个点在中列/中行），
+     整片点阵在"element 左上角"坐标系里的包围盒是 x 19..71、y -19..33（两个方向都 52px），
+     中心落在 (45, 7) —— 明显偏右下。
+     要把这个中心对到定位盒正中（76/2 = 38），element 左上角就得落在
+     38 - 45 = -7、38 - 7 = 31，也就是下面的 translate(-7px, 31px)。
+     改点径、任何一档偏移或 spread 时，这两个数都必须跟着重算；
+     它也同时管水平和垂直，所以写法从示例的 translateX 变成了 translate。 */
+  transform: translate(-7px, 31px);
+  animation: l26 2s infinite linear;
+}
+
+@keyframes l26 {
+  12.5% {box-shadow:
+      19px -19px 0 0px #e7e7eb, 38px -19px 0 0px #62c976, 57px -19px 0 5px #e7e7eb,
+      19px 0 0 5px #cf8e15, 38px 0 0 0px #e7e7eb, 57px 0 0 5px #599bfc,
+      19px 19px 0 0px #e7e7eb, 38px 19px 0 0px #e7e7eb, 57px 19px 0 0px #c084fc
+  }
+  25%   {box-shadow:
+      19px -19px 0 5px #e7e7eb, 38px -19px 0 0px #62c976, 57px -19px 0 5px #e7e7eb,
+      19px 0 0 0px #cf8e15, 38px 0 0 0px #e7e7eb, 57px 0 0 0px #599bfc,
+      19px 19px 0 0px #e7e7eb, 38px 19px 0 5px #e7e7eb, 57px 19px 0 0px #c084fc
+  }
+  50%   {box-shadow:
+      19px -19px 0 5px #e7e7eb, 38px -19px 0 5px #62c976, 57px -19px 0 0px #e7e7eb,
+      19px 0 0 0px #cf8e15, 38px 0 0 0px #e7e7eb, 57px 0 0 0px #599bfc,
+      19px 19px 0 0px #e7e7eb, 38px 19px 0 0px #e7e7eb, 57px 19px 0 5px #c084fc
+  }
+  62.5% {box-shadow:
+      19px -19px 0 0px #e7e7eb, 38px -19px 0 0px #62c976, 57px -19px 0 0px #e7e7eb,
+      19px 0 0 5px #cf8e15, 38px 0 0 0px #e7e7eb, 57px 0 0 0px #599bfc,
+      19px 19px 0 0px #e7e7eb, 38px 19px 0 5px #e7e7eb, 57px 19px 0 5px #c084fc
+  }
+  75%   {box-shadow:
+      19px -19px 0 0px #e7e7eb, 38px -19px 0 5px #62c976, 57px -19px 0 0px #e7e7eb,
+      19px 0 0 0px #cf8e15, 38px 0 0 0px #e7e7eb, 57px 0 0 5px #599bfc,
+      19px 19px 0 0px #e7e7eb, 38px 19px 0 0px #e7e7eb, 57px 19px 0 5px #c084fc
+  }
+  87.5% {box-shadow:
+      19px -19px 0 0px #e7e7eb, 38px -19px 0 5px #62c976, 57px -19px 0 0px #e7e7eb,
+      19px 0 0 0px #cf8e15, 38px 0 0 5px #e7e7eb, 57px 0 0 0px #599bfc,
+      19px 19px 0 5px #e7e7eb, 38px 19px 0 0px #e7e7eb, 57px 19px 0 0px #c084fc
+  }
+}
+
+/* 定位盒：76px 见方（点阵整片 52px，装得下还留了点余量），靠 50% + 负 margin 摆到 spinner 正中。
+   它只负责"给 .loader 一个居中的坐标系" —— 真正的居中由 .loader 那串
+   `translate(-7px, 31px)` 完成（推导见那条注释）。两个数是一对：改点阵尺寸/偏移时，
+   这里的 76/38 和那里的 -7/31 都要一起重算。
+   兜底：`.loader` 高度写死 4px，所以 .loader 的定位不依赖 aspect-ratio。 */
+.board-loader-box {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 58px;
-    height: 58px;
-    transform: translate(-50%, -50%);
-    background-image: url('assets/logo-dark.svg');
-    background-size: contain;
-    background-position: center;
-    background-repeat: no-repeat;
-    opacity: 0.92;
-}
-
-/* 外圈用 padding + border 的圆做出定位基准，边框本身透明。
-   转的是这一层（不是每个点各转各的），所以那一圈点在哪个位置都是整体在转 */
-.board-loader-ring {
-    position: absolute;
-    inset: 0;
-    padding: 2px;
-    border: 1px solid transparent;
-    border-radius: 50%;
-    will-change: transform;
-    animation: board-loader-spin 2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
-}
-
-/* 一圈 16 个小点（角度与序号在 index.html 的行内 --dot-a / --dot-i 里）。
-   位置：translateY(-50px) 把点挪到基准半径（50px）上，末尾的 scale 是整个收缩的关键 ——
-   transform 从右往左算，先 scale 再 translate，位移会被一起缩放，
-   所以 scale 变小时点会**沿着半径往圆心靠**，而不是原地缩小。
-   角度起点补一个 -90deg，让 0deg 那个点落在正上方 */
-.board-loader-dot {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 5px;
-    height: 5px;
-    margin: -2.5px 0 0 -2.5px;
-    border-radius: 50%;
-    background: currentColor;
-    color: rgb(255 255 255 / 0.72);
-    transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(1);
-    /* 两件事同时进行：
-       · 收缩 —— 点往里一缩、再慢慢弹回外圈，按 --dot-i * -0.048s 依次错开，
-         这个"收缩波"沿着圈传，就是标签页加载图标那个样子；
-       · 明暗 —— 收缩时压暗、弹回外圈时提亮。
-       两个动画的周期与错开都一致，所以一直是同一批点在动 */
-    animation:
-        board-loader-pulse 1.6s cubic-bezier(0.55, 0, 0.45, 1) infinite,
-        board-loader-glow 1.6s ease-in-out infinite;
-    animation-delay:
-        calc(var(--dot-i, 0) * -0.048s),
-        calc(var(--dot-i, 0) * -0.048s);
-}
-
-/* 收缩：0% / 100% 停在外圈（scale 1 = 半径 50px），40% 收到 0.88（半径 44px）。
-   两端各留一大段"停住不动"，所以同一时刻只有三四个点在往里跑，其它点安安静静待在圈上 */
-@keyframes board-loader-pulse {
-    0%   { transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(1); }
-    40%  { transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(0.88); }
-    100% { transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(1); }
-}
-
-/* 明暗跟着收缩走：往里收的时候压暗，弹回外圈时提亮。
-   首尾用同一个值，慢速播放时看起来才是在"平稳地打呼"而不是跳一下 */
-@keyframes board-loader-glow {
-    0%   { color: rgb(255 255 255 / 0.72); }
-    40%  { color: rgb(255 255 255 / 0.4); }
-    100% { color: rgb(255 255 255 / 0.72); }
-}
-
-/* 整圈在转：轻微的快慢交替（两端都是缓的，中间快），比匀速有精神 */
-@keyframes board-loader-spin {
-    0%   { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    width: 76px;
+    height: 76px;
+    margin: -38px 0 0 -38px;
 }
 
 .board-loader-title {
@@ -1422,13 +1443,8 @@ h1 {
     }
 
     /* 加载指示器本身就是在表达"还在动"，完全停掉反而看不出在加载：
-       这里把整圈旋转（2s → 8s）和收缩波（1.6s → 6.4s）一起放慢到 1/4 速，
-       播下来就是一圈点缓慢地起伏 */
-    .board-loader-ring {
+       这里把点阵放慢到 1/4 速（2s → 8s），播下来是几个点慢慢地胀、慢慢地缩 */
+    .loader {
         animation-duration: 8s;
-    }
-
-    .board-loader-dot {
-        animation-duration: 6.4s;
     }
 }
