@@ -18,6 +18,10 @@ pnpm start
 
 Then open http://localhost:33333
 
+The server minifies the client scripts and stylesheet (comments stripped, identifiers shortened)
+once at startup, so the browser never receives the commented source. Nothing needs to be built for
+that — `public/` stays readable on disk, and the startup log prints how much it saved.
+
 ## Configuration
 
 The server reads `game-config.json` (see `game-config.json.example`):

@@ -9,8 +9,8 @@
     --cell-white: #eeeeee;     
     --text-color: #ffffff;
     /* 新增变量用于控制按钮和面板尺寸 */
-    --footer-height: 48px; 
-    --footer-height-inner: 36px;
+    --footer-height: 40px; 
+    --footer-height-inner: 30px;
 }
 
 body {
@@ -96,7 +96,7 @@ h1 {
     z-index: 300;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 /* .glass-panel 默认是 position: fixed，这里要回到按钮条里的流式排列 */
@@ -127,8 +127,8 @@ h1 {
 }
 
 .bottom-button svg {
-    width: 60%;
-    height: 60%;
+    width: 55%;
+    height: 55%;
     color: var(--text-color);
 }
 
@@ -137,8 +137,8 @@ h1 {
 #menu-button svg {
     position: absolute;
     inset: 0;
-    width: 60%;
-    height: 60%;
+    width: 55%;
+    height: 55%;
     margin: auto;
     transition: opacity 0.24s ease, transform 0.24s ease;
 }
@@ -1179,6 +1179,21 @@ h1 {
     margin-top: 6px;
 }
 
+.settings-made-by {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12px;
+    line-height: 1.2;
+    color: var(--text-muted, rgba(128, 128, 128, 0.9));
+    white-space: nowrap;
+}
+
+.settings-made-by a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
 /* 数据备份：导出 / 导入（用上面那栏的开发者密码 + 打包文件） */
 .settings-divider {
     height: 1px;
@@ -1323,47 +1338,67 @@ h1 {
     opacity: 0.92;
 }
 
-/* 外圈用 padding + border 的圆做出定位基准，边框本身透明 */
+/* 外圈用 padding + border 的圆做出定位基准，边框本身透明。
+   转的是这一层（不是每个点各转各的），所以那一圈点在哪个位置都是整体在转 */
 .board-loader-ring {
     position: absolute;
     inset: 0;
     padding: 2px;
     border: 1px solid transparent;
     border-radius: 50%;
+    will-change: transform;
+    animation: board-loader-spin 2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
 }
 
+/* 一圈 16 个小点（角度与序号在 index.html 的行内 --dot-a / --dot-i 里）。
+   位置：translateY(-50px) 把点挪到基准半径（50px）上，末尾的 scale 是整个收缩的关键 ——
+   transform 从右往左算，先 scale 再 translate，位移会被一起缩放，
+   所以 scale 变小时点会**沿着半径往圆心靠**，而不是原地缩小。
+   角度起点补一个 -90deg，让 0deg 那个点落在正上方 */
 .board-loader-dot {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 9px;
-    height: 9px;
-    margin: -4.5px 0 0 -4.5px;
+    width: 5px;
+    height: 5px;
+    margin: -2.5px 0 0 -2.5px;
     border-radius: 50%;
-    background: var(--text-color, #fff);
-    /* 每个点从"当前角"往外挪到 56px 半径处：这样不用给 8 个点各写一条 transform */
-    transform: rotate(var(--dot-a)) translateY(-56px);
-    opacity: 0.15;
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.55);
-    animation: board-loader-dot 1.2s ease-in-out infinite;
-    animation-delay: var(--dot-delay, 0s);
+    background: currentColor;
+    color: rgb(255 255 255 / 0.72);
+    transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(1);
+    /* 两件事同时进行：
+       · 收缩 —— 点往里一缩、再慢慢弹回外圈，按 --dot-i * -0.048s 依次错开，
+         这个"收缩波"沿着圈传，就是标签页加载图标那个样子；
+       · 明暗 —— 收缩时压暗、弹回外圈时提亮。
+       两个动画的周期与错开都一致，所以一直是同一批点在动 */
+    animation:
+        board-loader-pulse 1.6s cubic-bezier(0.55, 0, 0.45, 1) infinite,
+        board-loader-glow 1.6s ease-in-out infinite;
+    animation-delay:
+        calc(var(--dot-i, 0) * -0.048s),
+        calc(var(--dot-i, 0) * -0.048s);
 }
 
-/* 8 个点均分一圈（i 从 1 开始，指到 nth-child 上） */
-.board-loader-dot:nth-child(1) { --dot-a: 0deg; }
-.board-loader-dot:nth-child(2) { --dot-a: 45deg; }
-.board-loader-dot:nth-child(3) { --dot-a: 90deg; }
-.board-loader-dot:nth-child(4) { --dot-a: 135deg; }
-.board-loader-dot:nth-child(5) { --dot-a: 180deg; }
-.board-loader-dot:nth-child(6) { --dot-a: 225deg; }
-.board-loader-dot:nth-child(7) { --dot-a: 270deg; }
-.board-loader-dot:nth-child(8) { --dot-a: 315deg; }
+/* 收缩：0% / 100% 停在外圈（scale 1 = 半径 50px），40% 收到 0.88（半径 44px）。
+   两端各留一大段"停住不动"，所以同一时刻只有三四个点在往里跑，其它点安安静静待在圈上 */
+@keyframes board-loader-pulse {
+    0%   { transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(1); }
+    40%  { transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(0.88); }
+    100% { transform: rotate(calc(var(--dot-a) - 90deg)) translateY(-50px) scale(1); }
+}
 
-/* --dot-delay 是负的，所以加载时 8 个点的相位已经错开，一上来就是"在追"的样子 */
-@keyframes board-loader-dot {
-    0%   { opacity: 1; }
-    50%  { opacity: 0.15; }
-    100% { opacity: 1; }
+/* 明暗跟着收缩走：往里收的时候压暗，弹回外圈时提亮。
+   首尾用同一个值，慢速播放时看起来才是在"平稳地打呼"而不是跳一下 */
+@keyframes board-loader-glow {
+    0%   { color: rgb(255 255 255 / 0.72); }
+    40%  { color: rgb(255 255 255 / 0.4); }
+    100% { color: rgb(255 255 255 / 0.72); }
+}
+
+/* 整圈在转：轻微的快慢交替（两端都是缓的，中间快），比匀速有精神 */
+@keyframes board-loader-spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 .board-loader-title {
@@ -1387,9 +1422,13 @@ h1 {
     }
 
     /* 加载指示器本身就是在表达"还在动"，完全停掉反而看不出在加载：
-       这里放慢并去掉光晕，减少视觉冲击 */
+       这里把整圈旋转（2s → 8s）和收缩波（1.6s → 6.4s）一起放慢到 1/4 速，
+       播下来就是一圈点缓慢地起伏 */
+    .board-loader-ring {
+        animation-duration: 8s;
+    }
+
     .board-loader-dot {
-        animation-duration: 3s;
-        box-shadow: none;
+        animation-duration: 6.4s;
     }
 }

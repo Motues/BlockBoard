@@ -6,6 +6,7 @@
 //   board-sync.ts      socket.io 协议（首屏下发、实时广播、增量日志）
 //   dev-api.ts         开发者工具与数据导入 / 导出接口
 //   board-transfer.ts  打包文件的格式与应用（BBEX）
+//   minify.ts          前端资源压缩（去注释 / 压行 / 局部变量改名，启动时压一次放内存）
 
 import { Hono } from 'hono';
 import { createAdaptorServer } from '@hono/node-server';
@@ -17,8 +18,12 @@ import { liveConfig, getTotalSquares } from './board-config';
 import { initBoardState, paintCells, paintRect, saveNow, startAutoSave } from './board-state';
 import { broadcastRegion, flushPending, initStateSync, resetBoardForClients } from './board-sync';
 import { registerDevApi, resolveDevPassword } from './dev-api';
+import { minifyPublicAssets, serveMinified, describeMinifyResult, type MinifyResult } from './minify';
 
 const app = new Hono();
+
+// 客户端源码的目录：只在启动时读一遍，压缩结果常驻内存
+const publicDir = path.join(__dirname, '../public');
 
 // --- 静态资源 ---
 // 要求浏览器每次回源校验（no-cache 仍允许 304）。本项目没有打包步骤，模块之间是裸的相对
@@ -32,8 +37,16 @@ app.use('/*', async (c, next) => {
   }
 });
 
+// 压缩后的 js / css（见 minify.ts）。**必须排在 serveStatic 前面**：命中就发内存里那份，
+// 没命中（.svg / 字体 / 压缩失败的文件）由它 next() 交给 serveStatic。
+// 这里传的是"取结果"的函数，压完之前它返回 null，请求照旧走源码 —— 页面永远不会因为
+// 压缩还没做完就打不开。注意不能在压完之后再 app.use：Hono 的中间件栈在第一个请求
+// 进来时就定下来了，后加的不会再生效
+let minified: MinifyResult | null = null;
+app.use('/*', serveMinified(() => minified));
+
 // 放在接口之后注册，静态文件不会盖掉 /api/*
-app.use('/*', serveStatic({ root: path.join(__dirname, '../public') }));
+app.use('/*', serveStatic({ root: publicDir }));
 
 // --- HTTP 服务 ---
 // 数据导入要把整个存档包（可能几十 MB）传上来，所以给上传留够空间：
@@ -88,6 +101,19 @@ console.log(
 
 // --- socket.io ---
 initStateSync(io);
+
+// --- 前端资源压缩 ---
+// 启动时把 public/ 下的 js / css 压一遍（去注释、压行、局部变量改名）存进 minified，
+// 上面的中间件会取它。压不动也不会挡启动：失败的照旧发源码。
+// 和监听并行跑：压缩没做完就来的那几个请求由 serveStatic 发源码，做完之后全走内存里那份。
+(async () => {
+  try {
+    minified = await minifyPublicAssets(publicDir);
+    console.log(describeMinifyResult(minified));
+  } catch (error) {
+    console.error('Frontend minify skipped (serving source files):', error);
+  }
+})();
 
 // --- 开始监听 ---
 // 放在状态、接口、socket 都准备好之后：早开一秒就可能有人带着

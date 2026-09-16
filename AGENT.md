@@ -14,7 +14,8 @@
 - `src/board-transfer.ts` —— 数据导出 / 导入的打包文件格式（BBEX）与导入的应用 + 回滚。
 - `src/state.ts` —— 取值约定与编解码（24bit / 4bit / 1bit、RLE、批量差量 runs、重排）。编码一律先出 `Buffer`（`encodeStateBuffer` / `encodeLegacyStateBuffer` / `encodeRleBuffer`），字符串版只是它的 base64 包装；存档是带 magic、尺寸、epoch、rev 与 deflate 的 v3 格式（`buildSaveFile` / `parseSaveFile`，v2 也能读）。
 - `src/dev-api.ts` —— 开发者工具的服务端部分：密码解析（`resolveDevPassword()`）、密码换 token、token 校验、批量改色接口、数据导出 / 导入接口。
-- `public/` —— 纯 ES module 客户端，无打包、无构建步骤，由 `public/index.html` 通过 `public/js/main.mjs` 加载。
+- `src/minify.ts` —— 前端资源压缩：启动时用 esbuild 把 `public/` 下的 js / css 去注释、压行、改局部变量名，结果常驻内存后由中间件发出（见下文「前端资源压缩」）。
+- `public/` —— 纯 ES module 客户端，无打包、无构建步骤，由 `public/index.html` 通过 `public/js/main.mjs` 加载。**源码就是发给浏览器的那一套的可读版本**，压缩只发生在发送时，磁盘上不做中间产物。
 - `game-config.json` —— 棋盘尺寸、端口、开发者密码、会话时长。
 - `data/` —— 运行时生成的存档目录（`board-state.dat`、`board-size.json`），不进版本库。
 - [FEATURE.md](./FEATURE.md) —— 还没做的同步优化（分块下发 / 增量同步 / 瓦片）。
@@ -39,6 +40,29 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 前端还会显式报连接状态（`connection.mjs`）：`disconnect` / `connect_error` 时把在线人数显示成 `—`
 并弹一次 toast（10 秒节流）。这样"服务端没在运行"和"页面坏了"能一眼分开。
 
+### 前端资源压缩（`src/minify.ts`）
+
+发给浏览器的 js / css 是**运行时压过一遍的**：启动时 `minifyPublicAssets()` 用 esbuild 的
+`transform`（不打包）把 `public/js/*.mjs` 与 `public/styles.css` 逐个压成一行、去掉注释、
+局部变量改名，结果放进 `minified`，由挂在 `serveStatic` **之前**的 `serveMinified()` 直接发出。
+实测 21 个文件 262 KB → 119 KB（-55%），启动时几十毫秒，之后每个文件只压一次，全在内存里。
+
+几个必须记住的点：
+
+- **中间件要在模块顶层 `app.use` 注册**，不能在压缩完成后再注册：Hono 的中间件栈在第一个请求
+  进来时就定下来了，之后 `app.use` 不再生效 —— 踩过一次，表现是"日志说压好了，页面拿到的还是源码"。
+  所以传进 `serveMinified()` 的是 `() => minified`（每请求取一次），压完之前返回 `null`、请求自动
+  回落到源码，页面不会因为压缩没做完而打不开。
+- `target` 必须写 `esnext`：客户端有顶层 await（`shared.mjs` 顶层读 IndexedDB），写 `es2020`
+  会直接报 "Top-level await is not available" 把整个文件跳过（踩过一次）。
+- `charset` 必须写 `utf8`：esbuild 默认 `ascii`，会把中日韩文案转成 `\uXXXX`，`i18n.mjs`
+  压完反而更大。
+- 压缩**只压不改结构**：不打包，每个 `.mjs` 仍是独立 ES module，相对路径 `import` 照旧。
+  代价是**跨模块的导入 / 导出名保留原名**（`initBoardLoader`、`t`… 在 Network 面板里仍然可读），
+  真正的"混淆"需要打包成单文件才能做到 —— 那会改掉本项目"裸相对路径 import"的部署形态，没做。
+- 某个文件压失败只记一行日志并跳过（照旧发源码），`minifyPublicAssets()` 不抛错；
+  esbuild 是**运行时依赖**（放在 `dependencies` 里），生产装包只装 dependencies 时压缩才有效。
+
 ## 客户端布局
 
 | 模块 | 职责 |
@@ -60,7 +84,7 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 | `i18n.mjs` | 语言状态、`t()`、`applyStaticI18n()`、`onLangChange()` |
 | `settings.mjs` | 居中的设置弹窗 + 浏览器本地的开发者密码存取 + 数据导出 / 导入（复用同一个密码，不重复输入） |
 | `state-cache.mjs` | 棋盘状态的 IndexedDB 缓存（增量同步用）、节流写盘；不 import 任何模块 |
-| `loader.mjs` | 首屏加载动画（logo + 一圈圆点绕圈，`#board-loader`）：订阅 `connection` 上报的加载状态，就绪后淡出并从 DOM 摘掉 |
+| `loader.mjs` | 首屏加载动画（logo + 一圈小圆点，收缩波绕圈传并整圈旋转，`#board-loader`）：订阅 `connection` 上报的加载状态，就绪后淡出并从 DOM 摘掉 |
 | `edge-hint.mjs` | 桌面版 Edge 的鼠标手势提示卡片（含跳转 Edge 设置的按钮） |
 | `toast.mjs` | 底部居中的浮层提示，开发者工具与设置共用 |
 
@@ -119,8 +143,19 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
 
 网络不好时，页面要等 `init-game` / `state-chunk…state-done` 把状态传完才有东西可画。
 这段时间用一层全屏遮罩盖住：**中间是 logo**（`assets/logo-dark.svg`，和 favicon 一样按
-`prefers-color-scheme` 选深浅），**外圈 8 个圆点绕圈逐个点亮往前追**（纯 CSS：
-每个点 `rotate(var(--dot-a)) translateY(-56px)` 定位，`--dot-delay` 是负值所以一上来相位就是错开的）。
+`prefers-color-scheme` 选深浅），**外圈 16 个小圆点**（`index.html` 里行内的 `--dot-a` / `--dot-i`
+摆位置与序号，半径 50px、直径 5px），观感照浏览器标签页上那个转圈图标做：
+
+- **收缩波**：每个点沿半径往里缩一下再弹回外圈（`board-loader-pulse`，`scale` 配合
+  `translateY(-50px)` —— `transform` 从右往左算，`scale` 会把位移一起缩放，
+  所以点是真的"往圆心靠"而不是原地缩小），按 `--dot-i * -0.048s` 依次错开，
+  收缩的地方绕着圈传（`board-loader-glow` 同时压明暗，两个动画的周期与错开必须一致）。
+- **整圈旋转**：`.board-loader-ring` 一起转（`board-loader-spin`，2s，缓入缓出）。
+- 16 个点间距足够（外圈 50px 半径上中心距约 19.6px），点又小，所以看着是一圈**分开的点**，
+  不会糊成一条实心环 —— 加大点径或半径时要一起算间距，别让它们连起来。
+- 动的只有 `transform` 和 `color`，都在合成层上，主线程正忙也不掉帧。
+  **别用 `@property` 注册自定义属性去做关键帧插值**：`transform` 里的 `var()` 会在关键帧里
+  被当成固定值（试过 `--dot-a` / `--dot-r` 那套写法，动画整帧不动），要么写死、要么用 `scale`。
 
 - 标记**直接写在 HTML 里**（不是脚本建的），所以从首屏第一帧就看得见；同时它挡住画布交互 ——
   状态没到位之前点方块本来也没意义。
@@ -136,6 +171,8 @@ URL 上挂不了版本号（只有入口 `main.js?v=x` 与 `styles.css?v=x` 有�
   重连成功时 `connect` 事件会把它复位成"连接中"。
 - 文案用 `t()` 动态渲染（`onLangChange(render)`），**不能**用 `data-i18n` —— 状态行会随事件变，
   `data-i18n` 只在 `applyStaticI18n()` 时刷一次。
+- `prefers-reduced-motion: reduce` 下**不停掉**（它本身就在表达"还在动"），只是把整圈旋转与
+  收缩波一起放慢到 1/4 速；改动画周期时记得同步改那两条 `animation-duration`。
 - `initBoardLoader()` 必须在 `initConnection()` **之前**调用：首屏的 `init-game` 可能紧接着就来，
   挂晚了会漏掉"棋盘已就绪"那一条，遮罩就一直转下去。
 

@@ -18,6 +18,9 @@ pnpm start
 
 然后打开 http://localhost:33333
 
+服务端在启动时会把客户端脚本与样式表压缩一遍（去注释、缩短变量名），浏览器拿不到带注释的源码。
+这一步不需要额外构建：`public/` 目录里仍然是可读的源码，启动日志里会打印省下了多少。
+
 ## 配置
 
 服务端配置写在 `game-config.json`（可参考 `game-config.json.example`）：

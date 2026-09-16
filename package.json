@@ -1,6 +1,6 @@
 {
   "name": "BlockBoard",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "A real-time online block board",
   "scripts": {
     "dev": "ts-node src/server.ts",
@@ -12,6 +12,7 @@
   "packageManager": "pnpm@10.15.1",
   "dependencies": {
     "@hono/node-server": "^2.0.3",
+    "esbuild": "^0.28.2",
     "hono": "^4.12.21",
     "socket.io": "^4.8.1"
   },

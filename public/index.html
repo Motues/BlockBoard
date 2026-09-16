@@ -20,26 +20,32 @@
         })();
     </script>
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.6.0">
+    <link rel="stylesheet" href="styles.css?v=1.6.1">
 </head>
 <body>
 
-    <!-- 首屏加载动画：logo 居中 + 一圈圆点转着跑。
-         服务器把棋盘数据传完（init-game / state-done / sync-done）之前一直显示，
-         由 js/loader.mjs 控制显隐，隐藏后自己从 DOM 里摘掉 -->
+    <!-- 首屏加载动画 -->
     <div id="board-loader" class="board-loader" role="status" aria-live="polite">
         <div class="board-loader-inner">
             <div class="board-loader-spinner">
                 <div class="board-loader-logo"></div>
                 <div class="board-loader-ring">
-                    <i class="board-loader-dot" style="--dot-delay: 0s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.1s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.2s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.3s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.4s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.5s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.6s"></i>
-                    <i class="board-loader-dot" style="--dot-delay: -0.7s"></i>
+                    <i class="board-loader-dot" style="--dot-a: 0deg;   --dot-i: 0"></i>
+                    <i class="board-loader-dot" style="--dot-a: 22.5deg; --dot-i: 1"></i>
+                    <i class="board-loader-dot" style="--dot-a: 45deg;  --dot-i: 2"></i>
+                    <i class="board-loader-dot" style="--dot-a: 67.5deg; --dot-i: 3"></i>
+                    <i class="board-loader-dot" style="--dot-a: 90deg;  --dot-i: 4"></i>
+                    <i class="board-loader-dot" style="--dot-a: 112.5deg; --dot-i: 5"></i>
+                    <i class="board-loader-dot" style="--dot-a: 135deg; --dot-i: 6"></i>
+                    <i class="board-loader-dot" style="--dot-a: 157.5deg; --dot-i: 7"></i>
+                    <i class="board-loader-dot" style="--dot-a: 180deg; --dot-i: 8"></i>
+                    <i class="board-loader-dot" style="--dot-a: 202.5deg; --dot-i: 9"></i>
+                    <i class="board-loader-dot" style="--dot-a: 225deg; --dot-i: 10"></i>
+                    <i class="board-loader-dot" style="--dot-a: 247.5deg; --dot-i: 11"></i>
+                    <i class="board-loader-dot" style="--dot-a: 270deg; --dot-i: 12"></i>
+                    <i class="board-loader-dot" style="--dot-a: 292.5deg; --dot-i: 13"></i>
+                    <i class="board-loader-dot" style="--dot-a: 315deg; --dot-i: 14"></i>
+                    <i class="board-loader-dot" style="--dot-a: 337.5deg; --dot-i: 15"></i>
                 </div>
             </div>
             <div class="board-loader-title" data-i18n="loading.title">Loading board…</div>
@@ -53,7 +59,6 @@
 
     <div class="glass-panel footer-ui">
         <div><span data-i18n="common.online">Online</span>: <span id="onlineCount" style="color: #4cd137;">...</span></div>
-        <div><span data-i18n="common.madeBy">Made by</span> <a href="https://www.motues.top" target="_blank">Motues</a></div>
     </div>
 
     <!-- 提示弹窗：触屏和桌面端的操作完全不同，两份文案只显示当前设备那一份
@@ -237,6 +242,10 @@
         <div id="settings-transfer-status" class="settings-transfer-status"></div>
 
         <div class="settings-actions">
+            <div class="settings-made-by">
+                <span data-i18n="common.madeBy">Made by</span>
+                <a href="https://www.motues.top" target="_blank" rel="noopener">Motues</a>
+            </div>
             <button type="button" id="settings-close" class="dev-btn" data-i18n="common.close">Close</button>
             <button type="button" id="settings-save" class="dev-btn dev-btn-primary" data-i18n="common.save">Save</button>
         </div>
@@ -268,6 +277,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <!-- 客户端按功能拆成几个 ES 模块，入口是 js/main.mjs -->
-    <script type="module" src="js/main.mjs?v=1.6.0"></script>
+    <script type="module" src="js/main.mjs?v=1.6.1"></script>
 </body>
 </html>
