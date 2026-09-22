@@ -429,6 +429,12 @@ export function bindUiEvents() {
             closeColorPicker();
         }
 
+        // 点在圆环里（某个色块 / 圆心的彩虹圆）：这是选中动作，不是"点外面收圆环"。
+        // 这里必须放行 —— 圆环上的控件靠自己的 click 处理器干活（选色 / 打开调色盘），
+        // 早先的实现在触屏上对它们也 stopPropagation，click 到不了控件，
+        // 于是"点了色块不换色""点圆心调色盘弹不出来"，还得再点一次右键（见 doc/frontend.md）。
+        if (inRing) return;
+
         // 收起画笔圆环。圆环没开着就没什么可做的了
         if (!closeBrushRing()) return;
 

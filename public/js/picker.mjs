@@ -122,8 +122,12 @@ export function openColorPicker(anchor) {
 
     pickerOpen = true;
 
-    // 允许鼠标滚轮缩放棋盘时不要误改色相：焦点留给色号输入框之外的地方
-    document.getElementById('picker-hex').blur();
+    // 允许鼠标滚轮缩放棋盘时不要误改色相：焦点留给色号输入框之外的地方。
+    // 先 blur 再回写色号：blur 之后才不算"正在输入"，#rrggbb 才写得进去
+    // （上次关面板时留了个 #abc 简写或半截非法值的话，这里要把它重置成标准色号）
+    hexInputEl.blur();
+    hexInputEl.value = rgbToHex(pickerRgb);
+    hexInputEl.classList.remove('invalid');
 }
 
 // 关调色盘（点击吸管走 startPicking，不会到这里）
@@ -220,7 +224,6 @@ function renderPicker(options) {
     const sv = document.getElementById('picker-sv');
     const cursor = document.getElementById('picker-sv-cursor');
     const hueSlider = document.getElementById('picker-hue');
-    const hexInput = document.getElementById('picker-hex');
     const preview = document.getElementById('picker-preview');
 
     // 面板底色：白 → 纯色相，再叠一层透明 → 黑
@@ -242,8 +245,7 @@ function renderPicker(options) {
 
     // 用户正在输入时不要回写输入框，免得打字打到一半被覆盖
     if (!opts.fromHex) {
-        hexInput.value = rgbToHex(pickerRgb);
-        hexInput.classList.remove('invalid');
+        setHexInputValue(rgbToHex(pickerRgb));
     }
 }
 
@@ -333,6 +335,62 @@ function highlightActiveRecent() {
     }
 }
 
+// 色号输入框（反复用到，取一次）
+const hexInputEl = document.getElementById('picker-hex');
+
+// 用户正在这个框里打字吗？打字期间一律不程序回写输入框，
+// 否则 "#2345" 这种打到一半的值会被解析结果覆盖掉（见 hexInputChanged）
+function isHexEditing() {
+    return document.activeElement === hexInputEl;
+}
+
+// 程序设置色号（打开调色盘 / 拖 SV 面板 / 选最近颜色时）：只在用户没在输入时才回写，
+// 免得打字打到一半被覆盖
+function setHexInputValue(value) {
+    if (isHexEditing()) return;
+
+    hexInputEl.value = value;
+    hexInputEl.classList.remove('invalid');
+}
+
+// 色号输入框的规则（只在这里处理，parseHexColor 本身仍认 #rgb 简写）：
+//   · 合法值边打边生效（#rgb 简写也认，但**不**把输入框改写成 #rrggbb —— 那样输入
+//     "234" 的第三下就被定成 #223344，第五、六位永远打不进去）
+//   · 打到一半不合法只标红，不提交
+// 结束输入（回车 / 失焦）时把能解析的值补全成 #rrggbb
+function hexInputChanged() {
+    const rgb = parseHexColor(hexInputEl.value);
+
+    if (rgb === null) {
+        hexInputEl.classList.add('invalid');
+        return;
+    }
+
+    hexInputEl.classList.remove('invalid');
+    setPickerRgb(rgb, { fromHex: true });
+    applyPickerColor();
+}
+
+// 输入结束：
+//   · 回车 = 明确收工，把 #rgb 补全成 #rrggbb（reformat）
+//   · 失焦 = 只是光标走了（点 SV 面板、点别的按钮），不重写用户输入框里的样子，
+//     只把能解析的值提交掉；下次打开调色盘时回写的就是标准 6 位色号
+function commitHexInput(reformat) {
+    const rgb = parseHexColor(hexInputEl.value);
+
+    if (rgb !== null) {
+        setPickerRgb(rgb, { fromHex: true });
+        applyPickerColor();
+    }
+
+    hexInputEl.classList.remove('invalid');
+
+    // 补全与回写只在明确收工（回车）或输入无法解析时做
+    if (reformat || rgb === null) {
+        hexInputEl.value = rgbToHex(pickerRgb);
+    }
+}
+
 // 调色盘里的自定义颜色要服务端认识才可用（由 connection.mjs 在 init-game 里判定）
 function serverAllowsRgb() {
     return serverCaps.rgb;
@@ -370,25 +428,20 @@ export function bindPickerEvents() {
     });
 
     // 色号输入框：#rgb / #rrggbb 都认，输入过程中不合法就先标红
-    document.getElementById('picker-hex').addEventListener('input', (e) => {
-        const rgb = parseHexColor(e.target.value);
+    hexInputEl.addEventListener('input', hexInputChanged);
 
-        if (rgb === null) {
-            e.target.classList.add('invalid');
-            return;
-        }
+    // 回车：结束输入。补全色号后留在面板里（颜色已经生效，用户可能还要接着调）
+    hexInputEl.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
 
-        e.target.classList.remove('invalid');
-        setPickerRgb(rgb, { fromHex: true });
-        applyPickerColor();
+        e.preventDefault();
+        commitHexInput(true);
+        e.target.blur();
     });
 
-    document.getElementById('picker-hex').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.target.blur();
-            closeColorPicker();
-        }
-    });
+    // 失焦（点 SV 面板 / 点别的按钮 / 关面板）只是光标走了：提交能解析的值，但不重写输入框
+    // （参数必须显式传 false —— 直接传函数会把 blur 事件对象当成 reformat 传进去）
+    hexInputEl.addEventListener('blur', () => commitHexInput(false));
 
     // 完成：关掉调色盘（颜色在选的时候就已经生效）
     document.getElementById('picker-done').addEventListener('click', () => {
@@ -405,8 +458,10 @@ export function bindPickerEvents() {
 onBrushChange(() => {
     renderRecentColors();
 
-    // 调色盘没有打开时不要回写 pickerHsv：拖到灰色（饱和度 0）时色相会被 RGB 反算冲掉
-    if (pickerOpen) syncPickerFromBrush();
+    // 调色盘没有打开时不要回写 pickerHsv：拖到灰色（饱和度 0）时色相会被 RGB 反算冲掉。
+    // 用户正在色号框里打字时也不要同步：每次 input 都会改画笔 → 触发这里，
+    // 同步会把输入框回写成 6 位色号，把用户还没打完的值冲掉
+    if (pickerOpen && !isHexEditing()) syncPickerFromBrush();
 });
 
 // "最近使用"这一行的小标题是动态生成的，换语言要重画

@@ -140,6 +140,7 @@ const DICT = {
         'dev.exportFailed': 'Export failed',
         'dev.exported': 'Exported the {w} x {h} selection',
         'dev.tooLarge': 'That is too many cells to change at once',
+        'dev.outOfRange': 'The area is outside the board — select again',
 
         'preset.offWhite': 'Off White (default)',
         'preset.beige': 'Beige',
@@ -268,6 +269,7 @@ const DICT = {
         'dev.exportFailed': '导出图片失败',
         'dev.exported': '已导出 {w} x {h} 的选区',
         'dev.tooLarge': '一次修改的方块太多了',
+        'dev.outOfRange': '选区超出了棋盘范围，请重新框选',
 
         'preset.offWhite': '灰白（默认）',
         'preset.beige': '米杏',
@@ -395,6 +397,7 @@ const DICT = {
         'dev.exportFailed': '匯出圖片失敗',
         'dev.exported': '已匯出 {w} x {h} 的選取範圍',
         'dev.tooLarge': '一次修改的方塊太多了',
+        'dev.outOfRange': '選取範圍超出了棋盤，請重新框選',
 
         'preset.offWhite': '灰白（預設）',
         'preset.beige': '米杏',
@@ -522,6 +525,7 @@ const DICT = {
         'dev.exportFailed': '書き出しに失敗しました',
         'dev.exported': '{w} x {h} の選択範囲を書き出しました',
         'dev.tooLarge': '一度に変更するブロックが多すぎます',
+        'dev.outOfRange': '選択範囲がボードの外にあります — 選び直してください',
 
         'preset.offWhite': 'オフホワイト（既定）',
         'preset.beige': 'ベージュ',
@@ -649,6 +653,7 @@ const DICT = {
         'dev.exportFailed': '내보내기 실패',
         'dev.exported': '{w} x {h} 선택 영역을 내보냈습니다',
         'dev.tooLarge': '한 번에 바꾸기에는 블록이 너무 많습니다',
+        'dev.outOfRange': '선택 영역이 보드 범위를 벗어났습니다 — 다시 선택해 주세요',
 
         'preset.offWhite': '오프화이트 (기본)',
         'preset.beige': '베이지',

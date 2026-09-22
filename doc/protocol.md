@@ -119,6 +119,8 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
 
 `color` 与单元格取值同一套约定：`0` 黑、`1..15` 预设编号、`>= 16` 为 24bit RGB。矩形坐标会被规范化（`min` / `max`），越界返回 400 `out-of-range`。
 
+**边界一律现场取，不能缓存启动尺寸**：`registerDevApi` 只在启动时跑一次，而数据导入会换掉棋盘尺寸（`setLiveConfig` + `replaceGrid`）。把 `cols` / `rows` 存进闭包就会出现「导入放大棋盘后，越过旧边界的框选被判 `out-of-range`，必须重启才恢复」——矩形用 `liveConfig.cols` / `liveConfig.rows`，闭合区域的格子下标用 `getGridState().length`，`options` 里不再传尺寸（`GET /api/dev/session` 早就是这么做的）。
+
 ## 数据导出 / 导入：BBEX
 
 设置弹窗「数据备份」把 `game-config.json` 与 `data/board-state.dat` 打包成 `.bbx`，导入时服务端解析、覆盖两者。要密码：就是开发者密码。客户端复用 `blockboard-dev-password`，不重复输入。
@@ -148,7 +150,7 @@ magic / 版本 / 长度之和 / 两个校验和逐项校验，任一不符都当
 
 - `devPassword` 既不导出也不导入：导出文件可能被转发，带管理密码等于泄露；导入别人包会换掉自己密码、被锁在开发者工具外。`applyImport` 把服务器当前 `liveConfig.devPassword` 合并进新配置（保留字段由 `preservedFields()` 给出）。
 - 监听端口优先级：`PORT` 环境变量 > `game-config.json` 的 `port`（解析在 `board-config.ts`，启动时一次性定下）。设了 `PORT` 时 `preservedFields()` 会把 `port` 一起保留 —— 免得一个来源不明的备份把容器里的服务改到别的端口上，那时改端口只能改部署。
-- 导入实时生效：`writeGameConfig()` 写盘（先 `.tmp` 再 `rename`；目标是被挂载进来的文件时 `rename` 报 `EBUSY`，退回原地覆写，见 `doc/state-format.md`）→ `setLiveConfig()` 换运行期配置 → `replaceGrid()` 按新尺寸重排、换新 epoch、`syncRev` 归零并立刻写盘 → `resetBoardForClients()` 广播 `board-reset`。改尺寸不用重启，在线客户端自动重同步。这要求 `rows` / `cols` 运行期取值：`TOTAL_SQUARES` 已删，走 `getTotalSquares()`；`gridState` 从 `const` 变 `let` + `getGridState()`。
+- 导入实时生效：`writeGameConfig()` 写盘（先 `.tmp` 再 `rename`；目标是被挂载进来的文件时 `rename` 报 `EBUSY`，退回原地覆写，见 `doc/state-format.md`）→ `setLiveConfig()` 换运行期配置 → `replaceGrid()` 按新尺寸重排、换新 epoch、`syncRev` 归零并立刻写盘 → `resetBoardForClients()` 广播 `board-reset`。改尺寸不用重启，在线客户端自动重同步。这要求 `rows` / `cols` 运行期取值：`TOTAL_SQUARES` 已删，走 `getTotalSquares()`；`gridState` 从 `const` 变 `let` + `getGridState()`。开发者工具的批量改色边界同样按当前值取（见上文），否则放大棋盘后框选会一直报“超出棋盘范围”。
 - 失败回滚：先写文件再换内存；内存抛错就把 `game-config.json` 还原回原始字节、运行期配置退回旧的。不留“文件新配置、服务端旧配置”半成品。
 - 尺寸范围 1..100000，总格数上限 1 亿；上传整体上限 256 MB（HTTP 层 `serverOptions.maxRequestBodySize` + 应用层按 `Content-Length` 兜底）。`port` 没被 `PORT` 钉住时改了也要重启才生效，导入响应 `sizeChanged` 只说棋盘尺寸。
 - multipart 手写解析（`parseMultipart`，按 latin1 切分，别改成 UTF-8 文本，二进制会坏），额外接受 `application/octet-stream` 裸包体。

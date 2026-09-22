@@ -42,6 +42,7 @@
 
 - 预设色编号存 `blockboard-brush-color`，自定义颜色存 `#rrggbb`（`brush.mjs`）。
 - 调色盘（`picker.mjs`）打开时起点是“上次确认过的颜色”（`main.mjs` 的 `primePickerBrush`），不是当前画笔 —— 否则选到一半取消会把画笔带歪。
+- 色号输入框：`#rgb` / `#rrggbb` 都认，合法值边打边生效，但**不**把输入框改写成 `#rrggbb`；`parseHexColor` 本身认三位简写，一旦在 `input` 时回写，打到第三个字符就会被定成 `#223344`，后面的位再也打不进去。输入期间不合法只标红不提交；收工（回车）才补全成 `#rrggbb`，失焦只提交、不重写用户输入的样子。打字期间 `onBrushChange` 也不回写（`isHexEditing()`），否则每次输入都会把还没打完的值冲掉。
 - 取色器（`picker.mjs` 的 `pickCellAt`）：进入取色模式后 `cursor.mjs` 换吸管光标，`board.mjs` 让指向格子放大（`PICK_HOVER_SCALE`，不带波浪动画），旁边跟 `#rrggbb` 小浮窗；点中方块后立刻 `stopPicking()`。这一下不能被当成涂色（原因见画布输入 `pointerPhase`）。
 - 最近使用：`blockboard-recent-colors`，`#rrggbb` JSON 数组，最新在前、去重、最多 10 条、跳过纯黑；`brush.mjs` 读写，`picker.mjs` 只渲染。
 
@@ -112,6 +113,7 @@ Edge 自带「鼠标手势」是浏览器级功能：长按右键拖动会被 Ed
 - `pointerPhase` 必须在下按时记：取色成功后 `pickCellAt` 会立刻 `stopPicking()`，`click` 里再读 `isPickMode()` 已是 false，会把取色那一下当普通涂色。
 - 触屏长按阈值 `TOUCH_LONGPRESS_MS = 420`（比右键 220 长，手指会抖）。长按生效后 `suppressTouchContextMenu` 要留到 `onContextMenu` 再清：浏览器补发的 `contextmenu` 在 `touchend` 之后才到，抬手时就清会拦不住。
 - 圆环模态：点圆环外只收起、不涂色（`markRingJustClosed()` → `interactions` 里 `consumeRingJustClosed()` 直接 return）；点色块仍正常选中（色块在 `#brush-ring` 内，`onPointerDown` 不会收它）。
+- 圆环里的点击（预设色块、圆心彩虹圆）在 `connection.mjs` 的 document 捕获监听里**必须直接放行**（`inRing` 就 return）：控件靠自己的 `click` 干活，如果这里对它们也 `stopPropagation`，触屏上点色块不换色、点圆心调色盘弹不出来 —— 桌面端看起来正常只是因为这层挡不住鼠标 click（触摸的 click 在鼠标事件之后，会被 `stopPropagation` 吞掉）。
 - 开发者模式下触屏不接管手势：长按/框选由 `devtools` 负责，这里只记 `pointerPhase`。
 
 ## 客户端开发者模式交互
@@ -122,6 +124,7 @@ Edge 自带「鼠标手势」是浏览器级功能：长按右键拖动会被 Ed
 - 左键短按（`viewState.hasMoved` 为假）把操作目标切成「该方块所在的闭合区域」，并取消已有矩形选区。
 - 右键菜单：填成画笔色、重置为黑、从调色盘选自定义颜色、导出选区/区域、取消选区。菜单里不再列预设调色板颜色，颜色入口只留调色盘（`pushCustomColorAction` → `chooseCustomColor`，选色过程临时借用调色盘，选完把画笔恢复原样，所以开发者工具取色不会改掉用户画笔）。
 - 闭合区域 flood fill 在客户端算：`computeClosedRegion` 做“颜色相同 + 四连通”扩散，碰到棋盘边缘判未闭合提示，不算通过；`computeBoundary` 另算一圈轮廓用于高亮。
+- 导入换过尺寸后（`board-reset` 只重算几何，不动这里的选区）：放大棋盘时服务端按当前尺寸放行，新范围立刻能用；缩小棋盘时留下的旧选区会被 `selectionInsideBoard` / `allIndicesInsideBoard` 挡下并清掉提示重新框选，不拿越界坐标去撞服务端。
 - 导出：`renderRegionToCanvas` + `saveAsPng` 出 PNG，另外把选区取值按二维数组写成 JSON。
 - `restoreSession()` 页面加载时调 `GET /api/dev/session`：服务端没启用只记 `devEnabled = false`；启用且本地 token 有效直接进入开发者模式。
 - 底部「开发者工具」按钮（`openDevTools`）：本地存过密码就直接 `login(saved, { silent: true })` 换 token，不弹窗；没存过弹密码框，登录成功后把密码写进 `blockboard-dev-password`；服务端 401（`bad-password`）清本地密码并重新弹窗；`locked` / `disabled` 只弹提示。服务端错误码经 `DEV_ERROR_KEYS` 映射成 i18n，服务端 `message` 只当兜底。`login(password, { silent: true })` 静默模式不改屏幕登录框，由调用方决定后续动作。

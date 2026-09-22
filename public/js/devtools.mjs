@@ -131,7 +131,10 @@ const DEV_ERROR_KEYS = {
     locked: 'dev.locked',
     disabled: 'dev.disabled',
     unauthorized: 'dev.sessionExpired',
-    'too-large': 'dev.tooLarge'
+    'too-large': 'dev.tooLarge',
+    'out-of-range': 'dev.outOfRange',
+    'bad-range': 'dev.outOfRange',
+    'bad-cell': 'dev.outOfRange'
 };
 
 function devErrorMessage(reason, fallback) {
@@ -319,6 +322,15 @@ function selectionSize(rect) {
     return { width, height, count: width * height, rect: norm };
 }
 
+// 选区是不是还在当前棋盘范围内。
+// 导入换掉尺寸后（board-reset 只重算几何，不动这里的选区）旧选区可能落到棋盘外面；
+// 这种选区不但填不了色，还会让"点在棋盘外但有选区"的分支弹出选区菜单
+function selectionInsideBoard(rect) {
+    const norm = normalizeRect(rect);
+
+    return norm.x0 >= 0 && norm.y0 >= 0 && norm.x1 < board.cols && norm.y1 < board.rows;
+}
+
 function hasSelection() {
     const rect = getDevSelection();
     return Boolean(rect) && selectionSize(rect).count > 0;
@@ -490,7 +502,25 @@ function chooseCustomColor(onPick, anchor) {
 }
 
 // --- 批量改色 ---
+// 客户端算好的下标也过一遍当前棋盘边界：导入换过尺寸、又恰好卡在重同步中间时，
+// 老坐标不该再发出去（服务端也会拒，但这里先挡住能少一次往返）
+function allIndicesInsideBoard(indices) {
+    const total = board.cols * board.rows;
+
+    for (const index of indices) {
+        if (!Number.isInteger(index) || index < 0 || index >= total) return false;
+    }
+
+    return true;
+}
+
 async function paintIndices(indices, color, label) {
+    if (!allIndicesInsideBoard(indices)) {
+        clearTargets();
+        toast(t('dev.outOfRange'), 'error');
+        return false;
+    }
+
     const { status, data } = await api('/api/dev/paint', {
         method: 'POST',
         body: JSON.stringify({ cells: indices, color })
@@ -524,6 +554,15 @@ async function paintSelection(color, label) {
     }
 
     const norm = normalizeRect(rect);
+
+    // 选区留在旧尺寸上（导入换过尺寸又重同步完）：清掉它并提示重新框选，
+    // 不要拿越界坐标去撞服务端的边界检查
+    if (!selectionInsideBoard(norm)) {
+        clearTargets();
+        toast(t('dev.outOfRange'), 'error');
+        return false;
+    }
+
     const { status, data } = await api('/api/dev/paint', {
         method: 'POST',
         body: JSON.stringify({ x0: norm.x0, y0: norm.y0, x1: norm.x1, y1: norm.y1, color })

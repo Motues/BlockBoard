@@ -13,6 +13,7 @@
 import crypto from 'crypto';
 import type { Context, Hono } from 'hono';
 import { liveConfig } from './board-config';
+import { getGridState } from './board-state';
 import { ImportError, applyImport, exportFileName, exportPackage, MAX_PACKAGE_BYTES } from './board-transfer';
 import { BLACK, PRESET_MAX, RGB_MASK, isCustomValue, toLegacyIndex } from './state';
 
@@ -30,11 +31,13 @@ export interface DevPaintResult {
   runs: string;
 }
 
+// 注意：棋盘尺寸**不**通过这里传（没有 cols / rows 字段）。数据导入会换掉它
+// （board-transfer 的 setLiveConfig + replaceGrid），而本 API 只在启动时注册一次；
+// 传进来的尺寸会被闭包缓存成"启动那一刻的值"，于是导入放大棋盘后越界的框选要重启才恢复。
+// 一律改成每次请求现场取：矩形用 liveConfig，格子下标用 getGridState().length。
 export interface DevApiOptions {
   password: string;
   sessionHours: number;
-  cols: number;
-  rows: number;
   /** 把矩形区域涂成某个取值 */
   paintRect: (x: number, y: number, width: number, height: number, color: number) => DevPaintResult;
   /** 把一组散落的格子（闭合区域填充）涂成某个取值 */
@@ -62,7 +65,12 @@ export function resolveDevPassword(): { password: string; source: 'env' | 'confi
 }
 
 export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
-    const { password, cols, rows } = options;
+    // 注意：**不要**在这里把 options.cols / options.rows 取出来缓存。
+    // 数据导入会换掉棋盘尺寸（board-transfer 的 setLiveConfig + replaceGrid），
+    // 而这个 API 只在启动时注册一次；把尺寸缓存在闭包里就会出现
+    // “导入放大棋盘后，越过旧边界的框选被判 out-of-range、必须重启才生效”。
+    // 每次请求都按当前状态取：格子边界用 gridState 的实际长度，矩形用 liveConfig。
+    const { password } = options;
     const sessionMs = Math.max(1, options.sessionHours || DEFAULT_SESSION_HOURS) * 60 * 60 * 1000;
 
     // token -> 过期时间
@@ -443,10 +451,12 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
                 return c.json({ ok: false, error: 'too-large', message: `一次最多修改 ${MAX_REGION_CELLS} 个方块` }, 400);
             }
 
+            // 下标边界按**当前**状态长度校验（导入可能刚把棋盘换大 / 换小）
+            const total = getGridState().length;
             const cells: number[] = [];
             for (const raw of body.cells) {
                 const index = Number(raw);
-                if (!Number.isInteger(index) || index < 0 || index >= cols * rows) {
+                if (!Number.isInteger(index) || index < 0 || index >= total) {
                     return c.json({ ok: false, error: 'bad-cell', message: '区域里包含非法下标' }, 400);
                 }
                 cells.push(index);
@@ -470,6 +480,10 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
         const endX = Math.max(x0, x1);
         const startY = Math.min(y0, y1);
         const endY = Math.max(y0, y1);
+
+        // 尺寸取当前生效的配置：导入放大棋盘后，新范围必须立刻可用（不用重启）
+        const cols = liveConfig.cols;
+        const rows = liveConfig.rows;
 
         if (startX < 0 || startY < 0 || endX >= cols || endY >= rows) {
             return c.json({ ok: false, error: 'out-of-range', message: '区域超出棋盘范围' }, 400);

@@ -85,8 +85,8 @@ const devPassword = resolveDevPassword();
 const devApi = registerDevApi(app, {
   password: devPassword.password,
   sessionHours: Number(liveConfig.devSessionHours) || 8,
-  cols: liveConfig.cols,
-  rows: liveConfig.rows,
+  // 不给 cols / rows：数据导入会换掉尺寸，dev-api 每次请求按当前 liveConfig / gridState 取，
+  // 缓存启动时那份会让"导入放大棋盘后越界"必须重启才恢复
   paintRect,
   paintCells,
   // 数据导入成功（棋盘可能连尺寸一起换了）：让所有在线客户端丢掉缓存重新拉全量
