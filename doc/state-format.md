@@ -14,9 +14,10 @@
 
 ## 存档
 
-- `data/board-state.dat` —— v3 格式：`'BBS3'` + 1 字节 flags（位 0 = 载荷是 24bit/格）+ `uint32LE cols` + `uint32LE rows` + `uint32LE epoch` + `uint32LE rev` + `deflate(裸状态字节)`，共 21 字节头。带自定义颜色写 24bit（3 字节/格），否则写 4bit/格（每字节两格，前一个格子放低 4 位），文件小 6 倍且旧版本程序也能读。写盘先写 `.tmp` 再 `rename`（原子替换），只有棋盘真的变了才写（`stateRev !== savedRev`）；写之前先把排队中的单格广播 flush 掉，保证文件里的 `rev` 与状态配套。
+- `data/board-state.dat` —— v3 格式：`'BBS3'` + 1 字节 flags（位 0 = 载荷是 24bit/格）+ `uint32LE cols` + `uint32LE rows` + `uint32LE epoch` + `uint32LE rev` + `deflate(裸状态字节)`，共 21 字节头。带自定义颜色写 24bit（3 字节/格），否则写 4bit/格（每字节两格，前一个格子放低 4 位），文件小 6 倍且旧版本程序也能读。写盘走 `writeFileAtomic()`：先写 `.tmp` 再 `rename`（原子替换），只有棋盘真的变了才写（`stateRev !== savedRev`）；写之前先把排队中的单格广播 flush 掉，保证文件里的 `rev` 与状态配套。
 - `epoch` / `rev` 给增量同步用：服务端重启后沿用存档里的 epoch / rev，客户端拿同样版本号回来可直接“什么都不用传”；棋盘尺寸变了换新 epoch（客户端缓存作废）。v2 存档（13 字节头、没有 epoch / rev）也能读，读出 epoch = 0 / rev = 0，服务端会换一个新 epoch。
 - `data/board-size.json` —— 这份存档对应的 `{ cols, rows }`。启动时先写一次，每次自动存档（每 60 秒）一起更新；主要给旧格式存档消歧（新格式尺寸在文件头）。
+- 三个写盘口（`game-config.json`、`board-state.dat`、`board-size.json`）都走 `board-persist.ts` 的 `writeFileAtomic()`：先 `.tmp` 再 `rename`。**目标是被挂载进来的文件时 rename 换不过去**（Linux 对 mount point 的 rename 一律 `EBUSY`，Node 报 “resource busy or locked”；跨文件系统的绑定挂载是 `EXDEV`，Docker Desktop 常见 `EPERM`），这时退回原地覆写，否则 Docker 里导入存档会直接失败。原地覆写没有原子性，所以只在上述错误码上退回（`ENOSPC` / `EROFS` 之类照旧抛错，免得把文件截成半份），并且每个文件只警告一次，之后直接原地覆写（不再白写一遍 `.tmp`）。
 - 自动存档：`setInterval(saveState, 60s)`，`saveState()` 第一件事比较 `stateRev` 与 `savedRev`，没改动直接返回 —— 不再每分钟重写几 MB 文件。
 
 旧存档仍能读（`loadState`）：先试 `parseSaveFile`（v3 / v2）；都不是就把整个文件当 base64 文本，交给 `decodeState` 按字节长度依次判定 **24bit（3 字节/格）→ 32bit（4 字节/格，高 8 位是自定义颜色标记）→ 4bit（每字节两格）→ 1bit（每字节八格）**。判定顺序关键：先看字节数是否正好等于某种格式在当前配置下的长度，都不匹配再尝试反推格子数，否则“比当前棋盘小的 4bit 存档”会被当成 24bit 读出乱码。字节数不足以反推尺寸时用 `board-size.json` 里的上一个配置消歧，仍没有就按更常见的 4bit 读。旧存档会在下一次真正发生改动时自动写成 v3，不需要手动迁移。

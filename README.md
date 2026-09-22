@@ -36,16 +36,22 @@ docker compose up -d
   changed from the config file (the `PORT` environment variable wins). To expose a different port,
   edit the left side of the mapping in `docker-compose.yml`, e.g. `8080:3000`, then open
   http://localhost:8080
-- The config is mounted from the current directory: edit `./game-config.json` (board size,
-  `cellSize`, `devPassword`) and run `docker compose restart`. The container runs as the non-root
-  uid 1000, so the file must be readable by it.
+- The config lives in the `game-config` Docker named volume, mounted at `/app/game-config.json`
+  (board size, `cellSize`, `devPassword`). **Editing `./game-config.json` in the repo does not affect
+  the container.** To read or change the mounted copy, use
+  `docker compose cp blockboard:/app/game-config.json ./`, edit it, copy it back with
+  `docker compose cp ./game-config.json blockboard:/app/game-config.json`, then
+  `docker compose restart`.
 - The save lives in `/app/data` inside the container; compose maps it to `./data` on the host.
   Nothing else needs persisting. On Linux the container runs as uid 1000, so if saves fail (check
   the logs) run `sudo chown -R 1000:1000 ./data` once.
+- **Data backup / data import** in the settings dialog works inside the container too: the config is
+  a single mounted file, and Linux refuses to `rename` over a mount point (`EBUSY`), so the server
+  falls back to writing it in place.
 - The developer password can also be supplied through the `DEV_PASSWORD` environment variable (it
   wins over the `devPassword` field) — see the comments in the compose file.
 
-> `game-config.json` is tracked in git (compose needs it to exist). Your edited copy will keep
+> `game-config.json` is tracked in git (a local image build needs it). Your edited copy will keep
 > showing up as modified — don't commit your own `devPassword`. To keep a personal config out of
 > git, put it in `game-config.local.json` (already gitignored).
 

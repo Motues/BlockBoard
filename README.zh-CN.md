@@ -32,14 +32,18 @@ docker compose up -d
 
 - 镜像地址：`ghcr.io/motues/blockboard:latest`。容器**内部端口固定 3000**，改不了（`PORT` 环境变量优先级高于配置文件）。
   换对外端口改 `docker-compose.yml` 里映射的左边，例如 `8080:3000`，然后访问 http://localhost:8080
-- 配置就挂在当前目录：直接改 `./game-config.json`（棋盘尺寸 / `cellSize` / `devPassword`），
-  改完 `docker compose restart` 生效。容器以非 root 的 uid 1000 运行，文件要让它读得到。
+- 配置放在 Docker 命名卷 `game-config` 里，挂到容器的 `/app/game-config.json`（棋盘尺寸 / `cellSize` /
+  `devPassword` 都在里面）。**改仓库里的 `./game-config.json` 不影响容器**，要看 / 改容器里那份：
+  `docker compose cp blockboard:/app/game-config.json ./` 取出来，改完
+  `docker compose cp ./game-config.json blockboard:/app/game-config.json` 送回去，再 `docker compose restart`。
 - 棋盘存档在容器的 `/app/data`，compose 已经映射到宿主机的 `./data`。别的都不用持久化。
   Linux 上容器以 uid 1000 运行，如果存档写不进去（日志里出现保存失败），执行一次：
   `sudo chown -R 1000:1000 ./data`。
+- 设置弹窗里的**数据备份 / 数据导入**在容器里照常可用：`game-config.json` 是挂载进来的单个文件，
+  Linux 不允许 `rename` 覆盖挂载点（`EBUSY`），服务端写它时会退回原地覆写。
 - 开发者密码也可以用环境变量 `DEV_PASSWORD` 给（优先级高于配置里的 `devPassword`），见 compose 里的注释。
 
-> `game-config.json` 是进版本库的（`docker compose` 依赖它存在）。改过的本地配置会一直显示为 modified，
+> `game-config.json` 是进版本库的（自己构建镜像时要用到）。改过的本地配置会一直显示为 modified，
 > 别把自己的 `devPassword` 提交上去；想留一份自己的配置又不被跟踪，就放到 `game-config.local.json`（已在 `.gitignore` 里）。
 
 ## 配置

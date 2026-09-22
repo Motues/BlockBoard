@@ -49,6 +49,7 @@
 - `docker build` 后启动，容器日志里端口是 `3000` 且 `from PORT environment variable`。
 - 改宿主机 `./game-config.json` 里的 `port` 成别的值，重启容器后监听端口仍是 3000。
 - 导入一份 `port` 不同的备份：落盘的配置里 `port` 保持 3000，服务不用重启。
+- **导入存档必须能写进去**（Docker 回归点）：容器里导入 `.bbx`，日志里不能出现 `EBUSY ... rename '/app/game-config.json.tmp' -> '/app/game-config.json'`。`game-config.json` 是**单个文件挂载**（compose 里的命名卷 `game-config`，或 `./game-config.json:/app/game-config.json` 的绑定挂载）时，Linux 对挂载点的 `rename` 一律 `EBUSY`，靠 `writeFileAtomic()` 退回原地覆写兜底 —— 原地覆写这条路必须真的走到（日志会有一条 “writing it in place instead” 的警告）。把 `data/board-state.dat` 单独挂进来时自动存档同理。
 - 挂载 `/app/data`，重启容器后棋盘内容还在；容器以 uid 1000 运行，挂载目录要让它能写。
 
 ### 协议与同步

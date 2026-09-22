@@ -329,7 +329,9 @@ export function applyImport(raw: Buffer, onBoardReset?: () => void): ImportResul
     replaceGrid(state || new Uint32Array(getTotalSquares()));
   } catch (error) {
     // 内存状态没能换过来：磁盘文件与运行期配置都还原回去，
-    // 别留下「文件是新配置、服务端按旧配置跑」这种对不上的状态
+    // 别留下「文件是新配置、服务端按旧配置跑」这种对不上的状态。
+    // 这里是**原地覆写**（不是 .tmp + rename）：要还原的就是原来那个文件本身，
+    // 而且目标可能是挂载进来的单个文件（rename 覆盖挂载点会 EBUSY）。
     try {
       if (originalConfig) fs.writeFileSync(gameConfigFilePath(), originalConfig);
       else fs.rmSync(gameConfigFilePath(), { force: true });
