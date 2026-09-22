@@ -15,7 +15,7 @@ import { Server } from 'socket.io';
 import http from 'http';
 import path from 'path';
 import { liveConfig, getTotalSquares, portSource } from './board-config';
-import { initBoardState, paintCells, paintRect, saveNow, startAutoSave } from './board-state';
+import { initBoardState, paintCells, paintRect, paintValues, saveNow, startAutoSave } from './board-state';
 import { broadcastRegion, flushPending, initStateSync, resetBoardForClients } from './board-sync';
 import { registerDevApi, resolveDevPassword } from './dev-api';
 import { minifyPublicAssets, serveMinified, describeMinifyResult, type MinifyResult } from './minify';
@@ -32,7 +32,8 @@ const publicDir = path.join(__dirname, '../public');
 app.use('/*', async (c, next) => {
   await next();
 
-  if (/\.(?:html|js|mjs|css|json)$/.test(c.req.path)) {
+  // txt 只有 llms.txt（给 AI 看的接口说明），同样要求回源校验，改了立刻生效
+  if (/\.(?:html|js|mjs|css|json|txt)$/.test(c.req.path)) {
     c.header('Cache-Control', 'no-cache');
   }
 });
@@ -89,6 +90,8 @@ const devApi = registerDevApi(app, {
   // 缓存启动时那份会让"导入放大棋盘后越界"必须重启才恢复
   paintRect,
   paintCells,
+  // 逐格写入（导入选区 JSON / AI 绘图走 /api/dev/draw）
+  paintValues,
   // 数据导入成功（棋盘可能连尺寸一起换了）：让所有在线客户端丢掉缓存重新拉全量
   onBoardReset: () => resetBoardForClients(io)
 });

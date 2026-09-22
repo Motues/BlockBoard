@@ -29,6 +29,8 @@ export interface DevPaintResult {
   changed: number;
   /** 变化格子的 RLE（[跳过多少格, 连续多少格, 颜色值]），空串表示没有变化 */
   runs: string;
+  /** runs 的基准下标（逐格写入时由 paintValues 给出，见下面的 start 说明） */
+  start?: number;
 }
 
 // 注意：棋盘尺寸**不**通过这里传（没有 cols / rows 字段）。数据导入会换掉它
@@ -42,6 +44,12 @@ export interface DevApiOptions {
   paintRect: (x: number, y: number, width: number, height: number, color: number) => DevPaintResult;
   /** 把一组散落的格子（闭合区域填充）涂成某个取值 */
   paintCells: (cells: number[], color: number) => DevPaintResult;
+  /**
+   * 逐格写入：cells 与 values 一一对应，同一批里每格可以不同取值
+   * （导入选区 JSON / AI 绘图）。cells 必须按下标升序；base 是这批格子的起点
+   * （区域左上角），返回的 start 要原样放进响应里，和广播用同一个基准
+   */
+  paintValues: (cells: number[], values: number[], base: number) => DevPaintResult;
   /**
    * 数据导入成功后调用：棋盘可能连尺寸一起换了，需要让所有在线客户端
    * 丢掉本地缓存重新拉一份全量（见 board-sync.ts 的 resetBoardForClients）
@@ -511,6 +519,102 @@ export function registerDevApi(app: Hono, options: DevApiOptions): DevAuthInfo {
                 rgb: isCustomValue(color) ? color : null,
                 isBlack: color === BLACK
             }
+        });
+    });
+
+    // --- 逐格写入：导入选区 JSON / AI 绘图 ---
+    // 形状与客户端导出的选区 JSON 一致：
+    //   { x, y, width?, height?, cells: [[值, ...], ...] }   行优先，起点 (x, y) 是左上角
+    // width / height 可以省略（按 cells 推导），给了就必须和 cells 对得上。
+    // 取值与单元格协议同一套：0 黑、1..PRESET_MAX 预设编号、> PRESET_MAX 为 24bit RGB。
+    // 客户端导入大选区时会按行切成多次请求（单次上限 MAX_REGION_CELLS），
+    // 每次请求是一段连续的整行，所以这里的下标天然按下标升序。
+    app.post('/api/dev/draw', async (c) => {
+        if (!enabled) return c.json({ ok: false, error: 'disabled', message: '开发者工具未启用' }, 503);
+        if (!authenticate(c)) return unauthorized(c);
+
+        let body: {
+            x?: unknown; y?: unknown; width?: unknown; height?: unknown; cells?: unknown;
+        } = {};
+        try {
+            body = await c.req.json();
+        } catch {
+            body = {};
+        }
+
+        const x = Number(body.x);
+        const y = Number(body.y);
+
+        if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) {
+            return c.json({ ok: false, error: 'bad-range', message: '起点坐标不合法' }, 400);
+        }
+
+        const rows = body.cells;
+        if (!Array.isArray(rows) || rows.length === 0 || !Array.isArray(rows[0])) {
+            return c.json({ ok: false, error: 'bad-shape', message: 'cells 必须是二维数组' }, 400);
+        }
+
+        const height = rows.length;
+        const width = rows[0].length;
+
+        if (width === 0) {
+            return c.json({ ok: false, error: 'bad-shape', message: 'cells 里的行是空的' }, 400);
+        }
+        if (body.width !== undefined && Number(body.width) !== width) {
+            return c.json({ ok: false, error: 'bad-shape', message: 'width 与 cells 不一致' }, 400);
+        }
+        if (body.height !== undefined && Number(body.height) !== height) {
+            return c.json({ ok: false, error: 'bad-shape', message: 'height 与 cells 不一致' }, 400);
+        }
+
+        // 先把上限和边界挡在前面：后面才按 width * height 分配下标数组，
+        // 否则一个声明成 10 万 x 10 万的 body 会先在这里把内存吃掉
+        if (width * height > MAX_REGION_CELLS) {
+            return c.json({ ok: false, error: 'too-large', message: `一次最多修改 ${MAX_REGION_CELLS} 个方块` }, 400);
+        }
+
+        // 边界一律现场取：数据导入会换掉棋盘尺寸，缓存启动尺寸会让放大后的棋盘写不进去
+        const cols = liveConfig.cols;
+        const rowsCount = liveConfig.rows;
+
+        if (x + width > cols || y + height > rowsCount) {
+            return c.json({ ok: false, error: 'out-of-range', message: '区域超出棋盘范围' }, 400);
+        }
+
+        const cells: number[] = new Array(width * height);
+        const values: number[] = new Array(width * height);
+        let cursor = 0;
+
+        for (let row = 0; row < height; row++) {
+            const line = rows[row];
+            if (!Array.isArray(line) || line.length !== width) {
+                return c.json({ ok: false, error: 'bad-shape', message: 'cells 每行的长度必须一致' }, 400);
+            }
+
+            const rowStart = (y + row) * cols + x;
+
+            for (let col = 0; col < width; col++) {
+                const value = Number(line[col]);
+
+                if (!Number.isInteger(value) || value < 0 || value > RGB_MASK) {
+                    return c.json({ ok: false, error: 'bad-value', message: '包含非法的颜色取值' }, 400);
+                }
+
+                cells[cursor] = rowStart + col;
+                values[cursor] = value;
+                cursor++;
+            }
+        }
+
+        const result = options.paintValues(cells, values, y * cols + x);
+
+        return c.json({
+            ok: true,
+            changed: result.changed,
+            // 本机套用用：颜色在 runs 的每一段里，所以不带 value / rgb / isBlack。
+            // start 必须用 paintValues 回报的那个（广播用的是同一个）—— 直接写区域起点
+            // 会在"左上角那几格本来就是目标色"时和广播错开，客户端看起来就是导入画了两遍
+            range: { start: result.start ?? (y * cols + x), width, height, runs: result.runs }
         });
     });
 

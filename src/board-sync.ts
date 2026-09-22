@@ -137,19 +137,28 @@ export function flushPending(io: Server): void {
   logPatch('update-squares', message);
 }
 
-/** 批量改色的广播：矩形发 runs，闭合区域发 indices */
+/**
+ * 批量改色的广播：矩形发 runs，闭合区域发 indices。
+ *
+ * `color` 传 null 表示"颜色写在 runs 的每一段里"（逐格写入：导入选区 JSON / AI 绘图，
+ * 见 board-state 的 paintValues）。这时不带消息级的 value / rgb / isBlack ——
+ * 它们只能表达一种颜色，带上反而会让不认识 runs 的老客户端把整片涂成一个色。
+ */
 export function broadcastRegion(
   io: Server,
-  color: number,
+  color: number | null,
   payload: { start?: number; indices?: number[]; runs: string }
 ): void {
-  const message = {
+  const message: Record<string, unknown> = {
     ...payload,
-    value: toLegacyIndex(color),
-    rgb: isCustomValue(color) ? color : null,
-    isBlack: color === BLACK,
     rev: bumpSyncRev()
   };
+
+  if (color !== null) {
+    message.value = toLegacyIndex(color);
+    message.rgb = isCustomValue(color) ? color : null;
+    message.isBlack = color === BLACK;
+  }
 
   io.emit('update-region', message);
   logPatch('update-region', message);

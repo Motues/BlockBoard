@@ -1,0 +1,195 @@
+# BlockBoard
+
+BlockBoard is a shared real-time pixel board: a rectangular grid of square
+cells, each holding exactly one color. Coordinates are 0-based, `x` is the
+column and `y` is the row, and `(0, 0)` is the top-left corner of the board.
+Everything below is plain HTTP; no SDK, no WebSocket needed to draw.
+
+This file is the whole public API surface an AI agent needs. Board size, cell
+colors and the developer password are NOT in here on purpose - read the size
+from the API and ask the user for the password.
+
+## 0. Before anything: ask the user for the developer password
+
+Writing to the board needs the developer password that was configured on the
+server (environment variable `DEV_PASSWORD`, or `devPassword` in
+game-config.json). Never guess it and never try to read it from the server.
+Ask the user for it, then follow `POST /api/dev/login` below.
+
+## 1. Read the current board size
+
+    GET /api/dev/session
+
+Example response:
+
+    { "ok": true, "enabled": true, "active": false,
+      "config": { "cols": 120, "rows": 80 } }
+
+- `config.cols` / `config.rows` are the LIVE board size. It changes whenever an
+  admin imports a data package, so call this before drawing instead of
+  hard-coding a size.
+- `enabled: false` means this server has no developer password at all; HTTP
+  drawing is closed on it.
+- `active` only says whether the caller's token is still valid.
+- This endpoint needs no authentication.
+
+There is no endpoint that reads cell colors back. If you need to know what is
+already drawn, ask the user to right-click a selection in the browser developer
+tools and use "Export as JSON": that file has exactly the shape
+`POST /api/dev/draw` accepts, so you can edit and send it back.
+
+## 2. Log in and get a token
+
+    POST /api/dev/login
+    Content-Type: application/json
+
+    { "password": "<the developer password>" }
+
+Success:
+
+    { "ok": true, "token": "<64 hex chars>", "expiresAt": 1699999999999 }
+
+Send that token on every later request either as the header `x-dev-token:
+<token>` or as `Authorization: Bearer <token>`.
+
+- Tokens are kept in server memory: they expire after `devSessionHours`
+  (default 8 hours) and die when the server restarts. On
+  `401 { "error": "unauthorized" }` just log in again.
+- Five wrong passwords in a row from one IP lock that IP for 5 minutes
+  (`429 { "error": "locked" }`). Do not retry in a loop.
+- `503 { "error": "disabled" }` means this server has the developer tools
+  turned off; drawing over HTTP is not possible there.
+
+## 3. Draw
+
+All write endpoints answer JSON. Cell count limits are per request; a picture
+bigger than the limit has to be sent in horizontal bands.
+
+### 3a. One rectangle, one color
+
+    POST /api/dev/paint
+    x-dev-token: <token>
+    Content-Type: application/json
+
+    { "x0": 10, "y0": 5, "x1": 19, "y1": 14, "color": 16711680 }
+
+`x0..x1` / `y0..y1` are inclusive and are normalized for you (`x1` may be
+smaller than `x0`). Both corners must be inside the board, otherwise
+`400 { "error": "out-of-range" }`. At most 200000 cells per request
+(`width * height`), otherwise `400 { "error": "too-large" }`.
+
+The alternative array form paints a list of scattered cells with one color:
+
+    { "cells": [0, 1, 2, 140], "color": 0 }
+
+`cells` are flat cell indices, `index = y * cols + x`. Maximum 200000 entries.
+
+### 3b. Many cells, each with its own color (use this for pictures)
+
+    POST /api/dev/draw
+    x-dev-token: <token>
+    Content-Type: application/json
+
+    {
+      "x": 10,
+      "y": 5,
+      "cells": [
+        [16711680, 16711680, 0],
+        [0,        65280,    0]
+      ]
+    }
+
+`cells` is a row-major 2D array of cell values: the first inner array is the
+top row of the picture, and `(x, y)` is where the top-left corner of that array
+lands on the board. `width` and `height` are optional (they are derived from
+`cells`); if you send them they must match, otherwise
+`400 { "error": "bad-shape" }`. Every value must be an integer in
+`0 .. 16777215`, otherwise `400 { "error": "bad-value" }`.
+
+Response:
+
+    { "ok": true, "changed": 6,
+      "range": { "start": 610, "width": 3, "height": 2, "runs": "..." } }
+
+- `changed` is how many cells really changed value (cells that already had that
+  color are skipped and do not count).
+- Ignore `range`: it is a local echo for the browser client.
+- Limits: at most 200000 cells per request (`width * height`), and the region
+  must fit inside the board (`x + width <= cols`, `y + height <= rows`) or you
+  get `400 { "error": "out-of-range" }`.
+
+Recommended procedure for a picture larger than 200000 cells:
+
+1. `GET /api/dev/session` to read `cols` / `rows`.
+2. Cut the picture into horizontal bands of
+   `rows_per_request = floor(200000 / picture_width)` rows.
+3. Send each band with its own `y` (`band_index * rows_per_request`) and the
+   `x` you want, using `/api/dev/draw`.
+4. Prefer few large requests over thousands of tiny ones.
+
+## 4. Cell values (colors)
+
+A cell value is a 24-bit integer:
+
+| value              | meaning                                             |
+| ------------------ | --------------------------------------------------- |
+| `0`                | black - the empty cell                              |
+| `1` .. `15`        | preset palette index (table below)                  |
+| `16` .. `16777215` | any RGB color, `(r << 16) | (g << 8) | b`            |
+
+The preset palette the web UI shows (1 .. 8; 9 .. 15 are accepted but unused):
+
+| index | hex       | name       |
+| ----- | --------- | ---------- |
+| 1     | `#eeeeee` | off white (default) |
+| 2     | `#cbb9a3` | beige      |
+| 3     | `#c79a83` | terracotta |
+| 4     | `#b6bb92` | olive      |
+| 5     | `#9dba9c` | sage       |
+| 6     | `#9bb8bd` | teal       |
+| 7     | `#a6a8c0` | lavender   |
+| 8     | `#c4a5ae` | dusty rose |
+
+Examples: red `#ff0000` = `16711680`, green `#00ff00` = `65280`,
+blue `#0000ff` = `255`, white `#ffffff` = `16777215`, erase to black = `0`.
+For an image, just convert every pixel to `r * 65536 + g * 256 + b`.
+
+## 5. Complete example
+
+    # 1. size (no auth)
+    curl -s http://localhost:3000/api/dev/session
+
+    # 2. log in -> copy "token" out of the reply
+    curl -s -X POST http://localhost:3000/api/dev/login \
+         -H 'Content-Type: application/json' \
+         -d '{"password":"YOUR_PASSWORD"}'
+
+    # 3. draw a 3x2 picture at (10, 5)
+    curl -s -X POST http://localhost:3000/api/dev/draw \
+         -H 'Content-Type: application/json' \
+         -H 'x-dev-token: YOUR_TOKEN' \
+         -d '{"x":10,"y":5,"cells":[[16711680,16711680,0],[0,65280,0]]}'
+
+    # 4. or flood one rectangle with black (erase)
+    curl -s -X POST http://localhost:3000/api/dev/paint \
+         -H 'Content-Type: application/json' \
+         -H 'x-dev-token: YOUR_TOKEN' \
+         -d '{"x0":0,"y0":0,"x1":9,"y1":9,"color":0}'
+
+## 6. Rules of thumb
+
+- Every write is applied immediately and broadcast live to every connected
+  browser. There is no commit step.
+- Changes are permanent; the server autosaves the board every 60 seconds.
+- Read `cols` / `rows` again if a request suddenly answers `out-of-range`: the
+  board may have been resized (all clients resync automatically, your token
+  stays valid).
+- Batch aggressively. There is no per-second rate limit on these HTTP
+  endpoints, but the server is a shared board, so keep the number of requests
+  low and the regions contiguous.
+- Do NOT call `POST /api/dev/export` or `POST /api/dev/import` unless the user
+  explicitly asks for a full backup or restore: they move whole files
+  (game-config.json + board save) and `import` overwrites the entire board.
+- Errors are always JSON: `{ "ok": false, "error": "<code>", "message": "..." }`
+  with HTTP status `400` (bad request), `401` (bad password / dead token),
+  `429` (locked out) or `503` (developer tools disabled).

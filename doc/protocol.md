@@ -4,7 +4,7 @@
 
 | 事件 | 方向 | 载荷 |
 | --- | --- | --- |
-| `init-game` | server → client | `{ config, version, black, maxColorIndex, rgbSupport, epoch, rev, stateMode }` + 状态。`version` 是服务端 `package.json` 里的版本号（设置弹窗左下角显示 “BlockBoard \| v1.7.0”），老服务端不发，客户端就只显示产品名。`stateMode`：`inline`（`stateRgb` + `stateEncoding` 一条消息装下）、`chunks`（后面跟 `state-chunk` ... `state-done`）、`client`（本机已有状态，后面跟 `sync-delta` / `sync-done`）。声明 `bin` 时 `stateRgb` 是二进制附件，否则 base64；未声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
+| `init-game` | server → client | `{ config, version, black, maxColorIndex, rgbSupport, epoch, rev, stateMode }` + 状态。`version` 是服务端 `package.json` 里的版本号（设置弹窗左下角显示 “BlockBoard \| v1.7.1”），老服务端不发，客户端就只显示产品名。`stateMode`：`inline`（`stateRgb` + `stateEncoding` 一条消息装下）、`chunks`（后面跟 `state-chunk` ... `state-done`）、`client`（本机已有状态，后面跟 `sync-delta` / `sync-done`）。声明 `bin` 时 `stateRgb` 是二进制附件，否则 base64；未声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
 | `state-chunk` | server → client | `{ seq, rowStart, rows, encoding, data }`。`encoding` 为 `rle` / `dense`（`-bin` 后缀表示二进制）；跳过计数相对本块起点，客户端按行偏移套用 |
 | `state-done` | server → client | `{ rev }`。分块下发收齐。客户端这时才认版本号，并回放缓冲的实时广播 |
 | `sync-delta` | server → client | `{ from, to, patches: [{ event, payload }, ...] }`。把日志里的状态变更按顺序重放，分批发送 |
@@ -88,6 +88,7 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
 - `runs` 第一个 varint 是“相对上一段结束位置再跳过多少格”，不是相对 `start` 的绝对偏移。绝对偏移只在第一段成立。编码端必须维护 `cursor`，否则从第二段起整片改动往后漂。
 - 广播必须带 `start`，客户端把 `runs` 当相对起点解析（`applyRegionPayload` 里 `let index = Number(start) || 0`）。缺 `start` 会被当成 0，所有改动落到左上角。
 - `runs` 是 base64 文本，客户端先 `toBytes()` 再交给 `readVarint()`。`readVarint` 按字节下标取值，直接传字符串会把字符当数字（`'A' & 0x7f` → NaN → 0），每个 varint 读成 0，`run <= 0` 立刻 break，整片改动静默丢失。
+- **一次改动的 runs 只能有一套基准**：编码用的基准、广播里的 `start`、HTTP 响应 `range.start` 必须是同一个。客户端拿到响应会先在本机套用一遍（不等广播绕一圈），广播随后还会到；两边本来就是同一串 runs，基准不一致就会画成错开的两份。`paintValues` 因此把基准作为参数收进来，并把真正用的基准放进 `PaintResult.start`，`/api/dev/draw` 直接回报它 —— 早先用 `changes[0].index` 当基准、响应里写区域起点，区域左上角本来就是目标色时（第一格不变）就会整体偏移，表现为"导入画了两遍还错位"。
 
 ## 开发者工具 HTTP API
 
@@ -112,14 +113,28 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
 | `POST /api/dev/logout` | –（token 在 `x-dev-token`） | 作废 token |
 | `GET /api/dev/session` | – | `{ ok, enabled, active, config: { cols, rows } }`（尺寸取当前生效配置） |
 | `POST /api/dev/paint` | `{ x0, y0, x1, y1, color }` 或 `{ cells: [], color }` | 应用改动并返回 `{ ok, changed, range }`；503 未启用，401 token 失效 |
+| `POST /api/dev/draw` | `{ x, y, width?, height?, cells: [[值, …], …] }` | 逐格写入（每格可以不同取值）：导出的选区 JSON 就是同一个形状，`/llms.txt` 里给 AI 的绘图接口也是它。返回 `{ ok, changed, range: { start, width, height, runs } }`（**不带** `value` / `rgb` / `isBlack`，颜色在 `runs` 的每一段里）；400 `bad-shape` / `bad-value` / `out-of-range` / `too-large` |
+| `GET /llms.txt` | – | 静态文件（`public/llms.txt`）：给 AI 看的绘图接口说明，只讲怎么读尺寸、登录、`paint` / `draw` 与颜色编码；动态数据（棋盘尺寸）让它自己调 `GET /api/dev/session`，文件里不放密码 |
 | `POST /api/dev/export` | –（密码在 `x-dev-password`） | 返回打包文件（`application/octet-stream` + `Content-Disposition`）；401 密码错误，429 锁定，503 未启用 |
 | `POST /api/dev/import` | multipart 的 `package` 文件（密码在 `x-dev-password`，也接受表单 `password`） | 覆盖 `game-config.json` 与存档，返回 `{ ok, configBytes, saveBytes, cols, rows, sizeChanged }`；400 包损坏/配置非法/存档对不上，413 太大 |
 
 `range` 是给客户端“本机先套用一遍，不等广播绕一圈”用的。矩形分支除了 `{ start, width, height, runs }` 还带 `value` / `rgb` / `isBlack`（与广播同一套取值）—— 少了颜色字段，客户端会用 `applyRegionPayload` 的兜底色（1 号色）涂一遍。闭合区域分支的 `range` 只有 `{ runs: '', spread: true }`，本机套用是空操作，实际落地靠 `update-region` 广播（带 `indices`）。
 
-`color` 与单元格取值同一套约定：`0` 黑、`1..15` 预设编号、`>= 16` 为 24bit RGB。矩形坐标会被规范化（`min` / `max`），越界返回 400 `out-of-range`。
+逐格写入（`/api/dev/draw`，导入选区 JSON 与 AI 绘图用）的 `range` 只有 `{ start, width, height, runs }`：**不带** `value` / `rgb` / `isBlack`，因为一次写入里每格的颜色可能不同，颜色写在 `runs` 每一段自己的取值里。客户端 `applyRegionPayload` 本来就读每段的 `cellValue`，所以本机套用与广播落地是同一条路径；`broadcastRegion(io, null, payload)` 就是这个意思（传 `null` 时消息里干脆不带那三个字段，免得只认消息级颜色的旧客户端把整片涂成一个色）。
+
+`color` 与单元格取值同一套约定：`0` 黑、`1..15` 预设编号、`>= 16` 为 24bit RGB。矩形坐标会被规范化（`min` / `max`），越界返回 400 `out-of-range`。`/api/dev/draw` 的 `cells` 必须是等长二维数组（`width` / `height` 可省略，给了就必须对得上），越界同样是 `out-of-range`，单次上限同为 `MAX_REGION_CELLS`，所以客户端导入大选区时按整行切块、多次请求。
 
 **边界一律现场取，不能缓存启动尺寸**：`registerDevApi` 只在启动时跑一次，而数据导入会换掉棋盘尺寸（`setLiveConfig` + `replaceGrid`）。把 `cols` / `rows` 存进闭包就会出现「导入放大棋盘后，越过旧边界的框选被判 `out-of-range`，必须重启才恢复」——矩形用 `liveConfig.cols` / `liveConfig.rows`，闭合区域的格子下标用 `getGridState().length`，`options` 里不再传尺寸（`GET /api/dev/session` 早就是这么做的）。
+
+## 给 AI 的绘图说明：/llms.txt
+
+`public/llms.txt` 是静态文件（`text/plain`，由 `serveStatic` 发出；`server.ts` 的 no-cache 中间件后缀白名单里加了 `txt`，改了立刻生效）。它只讲"怎么用 HTTP 在棋盘上画画"：
+
+- 先 `GET /api/dev/session` 拿当前 `cols` / `rows` —— 文件里不写死尺寸，导入换过尺寸也不会留下过期信息；也说明了没有"读回格子颜色"的接口，要还原画面得让用户从开发者工具导出选区 JSON。
+- 密码一律向用户索取：文件里不放 `devPassword`，也不放任何密钥，只说明去调 `POST /api/dev/login`。
+- `paint`（单色矩形 / 散落下标）与 `draw`（逐格二维数组）两个写接口、颜色编码（0 黑、1..15 预设、>= 16 为 24bit RGB）、预设色表、20 万格上限与"按行分块"的建议。
+
+改接口时必须同步改这个文件：它是 AI 看到的唯一文档。`/api/dev/draw` 的形状与选区 JSON 导出刻意保持一致（`{ x, y, width, height, cells }`），所以人导出的文件可以直接交给 AI，AI 画完也用同一条接口写回。
 
 ## 数据导出 / 导入：BBEX
 

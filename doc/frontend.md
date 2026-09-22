@@ -14,7 +14,8 @@
 | `camera.mjs` | 视口、缩放/平移边界、棋盘坐标 ↔ 屏幕坐标 |
 | `render.mjs` | 棋盘层离屏缓存、1 像素/格 LOD 位图、网格绘制、风车切换动画、PNG 导出、区域导出 |
 | `interactions.mjs` | 画布上的指针/触摸/滚轮输入，并把事件转发给开发者工具 |
-| `devtools.mjs` | 开发者模式：登录、框选、右键菜单、闭合区域填充、导出 |
+| `keyboard.mjs` | 键盘快捷键：Esc 逐层收起、C 调色盘、I 吸管、1–8 切预设色 |
+| `devtools.mjs` | 开发者模式：登录、框选、右键菜单、闭合区域填充、导出 PNG / JSON、导入 JSON |
 | `ring.mjs` | 画笔圆环、选项面板、帮助弹窗 |
 | `picker.mjs` | 调色盘、最近颜色色块、取色器模式 |
 | `connection.mjs` | socket 事件与全局 UI 绑定；首屏三条路与实时广播落地 |
@@ -33,10 +34,11 @@
 - `connection → loader` 单向：`connection.mjs` 只上报加载状态（`onLoadStatus`），`loader.mjs` 订阅并画。加载状态信号分散在首屏三条路里，反过来让 connection 画 DOM 会把它和界面绑死。
 - `state-cache.mjs` 是叶子：`shared.mjs` 顶层 `await` 读它，`connection.mjs` 报“状态变了”，`main.mjs` 喂“当前状态 + epoch/rev”写盘。因为这个顶层 await，导入 `shared.mjs` 的模块都会等缓存读完才开始执行。
 - `interactions` 不 import `devtools`：画布左键按下/移动/松手/右键通过 `shared.mjs` 的 `devEvents`（`EventTarget`）转发成 `leftdown` / `leftmove` / `leftup` / `leftcancel` / `contextmenu`，避免成环。
+- `keyboard.mjs` 是快捷键的汇总点：读 `brush` / `picker` / `ring`，**不** import `devtools` —— 开发者工具那层同样走 `devEvents` 的 `dismiss`（`emitDevEvent('dismiss', {})`），由 `devtools` 按“最上面那层”自己收。
 
 ## 功能行为
 
-设置弹窗（`settings.mjs`）三块：语言下拉、开发者密码、数据备份。语言边选边生效（预览），点「关闭」退回打开时那一种；密码与数据备份密码不写进服务端，但只有点「保存」才落盘（`blockboard-dev-password`）。数据备份用同一个开发者密码，不再单独要。左下角是 `BlockBoard | v1.7.0`：两个链接都写在 `index.html` 里（产品名 → 仓库），版本号在 `openSettingsPanel()` 里取 `shared.mjs` 的 `serverInfo.version`（来自 `init-game` 的 `version`，即服务端 `package.json` 的版本）填进 `#settings-version`，并拼成 `releases/tag/v<版本>` 的 href；老服务端不发版本号就把分隔符和版本号一起 `hidden`。hover 时两个链接都由默认的灰变成正文色（`.settings-made-by a:hover`，见 `public/styles.css`）。这行是语言无关的，不参与 i18n。
+设置弹窗（`settings.mjs`）三块：语言下拉、开发者密码、数据备份。语言边选边生效（预览），点「关闭」退回打开时那一种；密码与数据备份密码不写进服务端，但只有点「保存」才落盘（`blockboard-dev-password`）。数据备份用同一个开发者密码，不再单独要。左下角是 `BlockBoard | v1.7.1`：两个链接都写在 `index.html` 里（产品名 → 仓库），版本号在 `openSettingsPanel()` 里取 `shared.mjs` 的 `serverInfo.version`（来自 `init-game` 的 `version`，即服务端 `package.json` 的版本）填进 `#settings-version`，并拼成 `releases/tag/v<版本>` 的 href；老服务端不发版本号就把分隔符和版本号一起 `hidden`。hover 时两个链接都由默认的灰变成正文色（`.settings-made-by a:hover`，见 `public/styles.css`）。这行是语言无关的，不参与 i18n。
 
 画笔颜色：
 
@@ -47,6 +49,19 @@
 - 最近使用：`blockboard-recent-colors`，`#rrggbb` JSON 数组，最新在前、去重、最多 10 条、跳过纯黑；`brush.mjs` 读写，`picker.mjs` 只渲染。
 
 画笔圆环（桌面端右键短按，阈值见画布输入）：面板里是预设色 + 圆心彩虹圆；移动端圆环是模态的，点圆环外只收圆环、那一下不涂色。
+
+键盘快捷键（`keyboard.mjs`，`bindKeyboardShortcuts()` 在 `main.mjs` 里接）：
+
+| 键 | 行为 |
+| --- | --- |
+| Esc | 从最上面那层开始，一次收一个：取色模式 → 调色盘 → 画笔圆环 → 选项面板 → 开发者工具那层（登录框 / 导入 JSON 面板 / 右键菜单 / 选区与闭合区域高亮）→ 帮助弹窗 |
+| C | 打开调色盘（`openColorPicker({ center: true })` 居中弹出；没有锚点时它会按画笔圆环的位置定位，圆环可能还没出现过） |
+| I | 吸管取色器进 / 出（`startPicking()` / `stopPicking()`） |
+| 1–8 | 直接切到第 N 个预设色（编号与圆环上的色块一致），并记进“最近使用” |
+
+- 输入框里打字（色号、开发者密码、设置里的密码）与带 `Ctrl` / `Cmd` / `Alt` 的组合一律不拦；设置弹窗 / 开发者登录框 / 导入 JSON 面板开着时只让 Esc 干活。
+- “收掉了吗”这件事靠返回值：`closeBrushRing()` / `closeOptionsPanel()` / `closeHintPopup()` 都返回布尔值，Esc 收到 `true` 就停手，不再往下收。开发者工具那层靠 `devEvents` 的 `dismiss` 转发，`devtools.dismissDevOverlays()` 内部按同样的顺序只收一层。
+- 帮助弹窗的桌面文案多一行 `hint.shortcuts`（触屏那份不加：触屏没有键盘）。
 
 底部「菜单」按钮（`ring.mjs`）：点开选项面板，面板里是画笔颜色/重置视图/保存为图片/显示帮助（+ 移动端多一个「设置」项）。按钮上的「…」与「X」用 `.open` 类做交叉过渡。帮助弹窗 `#hint-popup` 页面加载后 1 秒弹出（`connection.mjs` 的 `bindUiEvents` 里 `setTimeout(showHintPopup, 1000)`），10 秒后自动收起；桌面端与触屏两份文案。「保存为图片」走 `render.mjs` 的 `saveAsImage`，挂在 `window` 上供 `index.html` 内联 `onclick` 调用。
 
@@ -125,7 +140,17 @@ Edge 自带「鼠标手势」是浏览器级功能：长按右键拖动会被 Ed
 - 右键菜单：填成画笔色、重置为黑、从调色盘选自定义颜色、导出选区/区域、取消选区。菜单里不再列预设调色板颜色，颜色入口只留调色盘（`pushCustomColorAction` → `chooseCustomColor`，选色过程临时借用调色盘，选完把画笔恢复原样，所以开发者工具取色不会改掉用户画笔）。
 - 闭合区域 flood fill 在客户端算：`computeClosedRegion` 做“颜色相同 + 四连通”扩散，碰到棋盘边缘判未闭合提示，不算通过；`computeBoundary` 另算一圈轮廓用于高亮。
 - 导入换过尺寸后（`board-reset` 只重算几何，不动这里的选区）：放大棋盘时服务端按当前尺寸放行，新范围立刻能用；缩小棋盘时留下的旧选区会被 `selectionInsideBoard` / `allIndicesInsideBoard` 挡下并清掉提示重新框选，不拿越界坐标去撞服务端。
-- 导出：`renderRegionToCanvas` + `saveAsPng` 出 PNG，另外把选区取值按二维数组写成 JSON。
+- 导出：右键菜单里是两个分开的动作 —— 「导出为图片（PNG）」（`renderRegionToCanvas` + `saveAsPng`）与「导出为 JSON」。JSON 形状是 `{ format, version, x, y, width, height, cells }`，`cells` 是按行排的二维取值数组（0 黑、1..15 预设编号、>= 16 为 24bit RGB），`x` / `y` 是选区在棋盘上的左上角，导入时可以直接用。
+- 导入 JSON（`导入 JSON…`，选区菜单与方块菜单里都有，触屏进不去开发者模式所以用不到）：
+  1. 点菜单项 → 打开隐藏的 `#dev-import-file` 文件框，同时记下“当前位置”（有选区 = 选区左上角，没有 = 右键点的那个方块）。
+  2. 选完文件解析校验（必须是二维等长数组、取值 0..0xFFFFFF），不合法或超过 32 MB 只提示 `dev.importBadFile` / `dev.tooLarge`，不再往下走。
+  3. 弹出 `#dev-import` 面板：文件信息 + 三个起点选项（文件自带 / 当前位置 / 点棋盘选）+ 取消。
+  4. `POST /api/dev/draw` 逐格写入，超过 `DRAW_CHUNK_CELLS`（100000）格时按整行切块、起点逐块下移；响应的 `range` 直接在本机套用（颜色在 `runs` 的每一段里，基准由服务端回报的 `range.start` 给出，见 `doc/protocol.md`）。
+  5. 起点放不下（`x + width > cols` 或 `y + height > rows`）只报 `dev.outOfRange`；点选起点模式下留在原地让用户换个地方点，Esc 取消。
+  6. **导入不退出开发者模式**：token 过期（服务端重启 / 会话超时）时先用本地保存的密码 `login(saved, { silent: true, quiet: true })` 静默重登一次并重试那一块；重登也不行只弹提示，不清 token、不退模式 —— 导入不是登出入口。`quiet` 就是为它加的：静默重登不必再喊一次"已开启开发者模式"。
+- 点选起点模式下 `handleLeftDown` / `handleLeftUp` / `handleContextMenu` 都要先让路（`importPicking` / 面板开着）：面板是模态的，点别处不会变成框选或新菜单；`handleLeftMove` 用它跟光标预览落点（复用选区高亮）。
+- 落点预览会**把 JSON 的画面一起画出来**：`buildImportPreview()` 把取值画成"1 像素 1 格"的离屏 canvas（超过 `IMPORT_PREVIEW_MAX_CELLS` = 400000 格就只留绿框，几十万次 `fillRect` 不值得），`paintDevOverlay` 里按棋盘几何整体放大贴上，`globalAlpha = IMPORT_PREVIEW_ALPHA`（0.6）好和真画上去的区分；有画面时不再铺那层绿色底色，绿色虚线框始终保留。贴上来的位图要 `imageSmoothingEnabled = false`，否则方块会被插值糊掉。
+- 导入面板 `#dev-import` 必须写进 `interactions.mjs` 的 `onPointerDown` 排除列表，否则按在面板上的左键会被当成开发者框选。
 - `restoreSession()` 页面加载时调 `GET /api/dev/session`：服务端没启用只记 `devEnabled = false`；启用且本地 token 有效直接进入开发者模式。
 - 底部「开发者工具」按钮（`openDevTools`）：本地存过密码就直接 `login(saved, { silent: true })` 换 token，不弹窗；没存过弹密码框，登录成功后把密码写进 `blockboard-dev-password`；服务端 401（`bad-password`）清本地密码并重新弹窗；`locked` / `disabled` 只弹提示。服务端错误码经 `DEV_ERROR_KEYS` 映射成 i18n，服务端 `message` 只当兜底。`login(password, { silent: true })` 静默模式不改屏幕登录框，由调用方决定后续动作。
 

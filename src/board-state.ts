@@ -16,6 +16,12 @@ export interface PaintResult {
   changed: number;
   /** 变化格子的 RLE（[跳过多少格, 连续多少格, 颜色值]），空串表示没有变化 */
   runs: string;
+  /**
+   * 这份 runs 的基准下标。**广播和 HTTP 响应必须用它**：
+   * 客户端本机套用（用响应里的 start）+ 广播落地是同一条 runs，
+   * 两边基准不一致就会画成错开的两份（见 paintValues 的注释）
+   */
+  start?: number;
 }
 
 /** 一次广播里"真的变了"的格子 */
@@ -37,10 +43,11 @@ export let epoch = 0;
 
 let savedRev = 0;
 
-// 由 server.ts 注入：flush 待广播的改动、写盘、广播批量改色
+// 由 server.ts 注入：flush 待广播的改动、写盘、广播批量改色。
+// color 传 null 表示"颜色写在 runs 的每一段里"（逐格取值写入），见 board-sync 的 broadcastRegion
 let onFlush: () => void = () => {};
 let persist: () => void = () => {};
-let onRegionPaint: (color: number, payload: RegionPayload) => void = () => {};
+let onRegionPaint: (color: number | null, payload: RegionPayload) => void = () => {};
 
 export interface RegionPayload {
   /** 矩形：runs 的基准下标 */
@@ -67,7 +74,7 @@ export function bumpSyncRev(): number {
 export function initBoardState(hooks: {
   onFlushPending: () => void;
   onPersist: () => void;
-  onRegionPaint: (color: number, payload: RegionPayload) => void;
+  onRegionPaint: (color: number | null, payload: RegionPayload) => void;
 }): void {
   onFlush = hooks.onFlushPending;
   persist = hooks.onPersist;
@@ -190,6 +197,38 @@ export function paintCells(cells: number[], color: number): PaintResult {
   onRegionPaint(color, { indices: cells, runs: '' });
 
   return { changed: changes.length, runs: '' };
+}
+
+/**
+ * 逐格写入：cells 与 values 一一对应，同一批里每格可以是不同取值
+ * （导入选区 JSON / AI 绘图走这条）。
+ *
+ * `cells` 必须按下标升序（`encodeChangedRuns` 的跳过量是相对上一段结束位置的，
+ * 顺序乱了游标会漂；调用方按行优先拼下标即可自然满足）。
+ * 广播时消息级的 `value` / `rgb` / `isBlack` 表达不了多种颜色，所以给 onRegionPaint
+ * 传 null —— 颜色由 runs 的每一段自己带，客户端也是按段读的。
+ *
+ * `base` 是这批格子在棋盘上的起点（区域左上角）。runs 的跳过计数相对它算，
+ * **返回的 start 也必须被 HTTP 响应原样带回去**：客户端拿到响应会先在本机套用一遍，
+ * 广播随后也会到，两边用的是同一串 runs，基准不一致就会变成"导入画了两遍还错位"。
+ * （早先这里用 `changes[0].index` 当基准，区域左上角本来就是目标色时第一格不变，
+ * 于是 changes[0] 往后挪，而响应里的 start 还是区域起点，两份画面整体错开。）
+ */
+export function paintValues(cells: number[], values: number[], base: number): PaintResult {
+  const changes: CellChange[] = [];
+
+  for (let i = 0; i < cells.length; i++) applyCell(cells[i], values[i], changes);
+
+  if (changes.length === 0) return { changed: 0, runs: '' };
+
+  touchState();
+
+  // base 比第一个改动还靠后时取小的那个，保证跳过计数不会是负数（正常调用不会发生）
+  const start = Math.min(base, changes[0].index);
+  const runs = encodeChangedRuns(changes, start);
+  onRegionPaint(null, { start, runs });
+
+  return { changed: changes.length, runs, start };
 }
 
 // --- 广播合并：16ms 窗口内的多次单格改动合成一条消息 ---

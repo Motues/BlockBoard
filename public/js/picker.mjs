@@ -91,29 +91,40 @@ export function openColorPicker(anchor) {
     const h = picker.offsetHeight;
 
     // 有锚点（例如从开发者菜单里点「自定义颜色」）就贴着锚点展开，
-    // 否则按画笔圆环的位置来
-    let anchorX = viewport.w / 2;
-    let anchorY = viewport.h / 2;
-    let half = 0;
+    // 否则按画笔圆环的位置来；anchor.center 是键盘快捷键（C）走的路：
+    // 没有鼠标位置可用，直接居中
+    let x;
+    let y;
 
-    if (anchor && typeof anchor.x === 'number') {
-        anchorX = anchor.x;
-        anchorY = anchor.y;
+    if (anchor && anchor.center) {
+        x = (viewport.w - w) / 2;
+        y = (viewport.h - h) / 2;
     } else {
-        const ringRect = ring.getBoundingClientRect();
-        anchorX = ringRect.left + ringRect.width / 2;
-        anchorY = ringRect.top + ringRect.height / 2;
-        half = ringHalf;
+        let anchorX = viewport.w / 2;
+        let anchorY = viewport.h / 2;
+        let half = 0;
+
+        if (anchor && typeof anchor.x === 'number') {
+            anchorX = anchor.x;
+            anchorY = anchor.y;
+        } else {
+            const ringRect = ring.getBoundingClientRect();
+            anchorX = ringRect.left + ringRect.width / 2;
+            anchorY = ringRect.top + ringRect.height / 2;
+            half = ringHalf;
+        }
+
+        // 优先放在锚点右边，放不下就放左边，最后再夹进屏幕
+        x = anchorX + half + gap;
+        if (x + w > viewport.w - margin) {
+            x = anchorX - half - gap - w;
+        }
+
+        y = anchorY - h / 2;
     }
 
-    // 优先放在锚点右边，放不下就放左边，最后再夹进屏幕
-    let x = anchorX + half + gap;
-    if (x + w > viewport.w - margin) {
-        x = anchorX - half - gap - w;
-    }
     x = clamp(x, margin, Math.max(margin, viewport.w - w - margin));
-
-    const y = clamp(anchorY - h / 2, margin, Math.max(margin, viewport.h - h - margin));
+    y = clamp(y, margin, Math.max(margin, viewport.h - h - margin));
 
     picker.style.left = Math.round(x) + 'px';
     picker.style.top = Math.round(y) + 'px';

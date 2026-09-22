@@ -199,8 +199,9 @@ function onPointerDown(e) {
     if (e.target.closest('#bottom-ui') || e.target.closest('#options-panel') ||
         e.target.closest('#brush-ring') || e.target.closest('#color-picker') ||
         e.target.closest('#dev-menu') || e.target.closest('#dev-login') ||
-        e.target.closest('#settings-modal') || e.target.closest('#dev-banner') ||
-        e.target.closest('#dev-toast') || e.target.closest('#hint-popup')) {
+        e.target.closest('#dev-import') || e.target.closest('#settings-modal') ||
+        e.target.closest('#dev-banner') || e.target.closest('#dev-toast') ||
+        e.target.closest('#hint-popup')) {
         viewState.panning = false;
         return;
     }

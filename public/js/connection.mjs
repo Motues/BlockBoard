@@ -1,6 +1,7 @@
 // 与服务端的连接：处理 init-game / state-chunk / state-done / sync-delta / sync-done /
 // update-square(s) / update-region / paint-rejected / online-users，
-// 并绑定与画布无关的全局 UI 事件（设置面板、提示弹窗、Esc、点空白处关面板）。
+// 并绑定与画布无关的全局 UI 事件（设置面板、提示弹窗、点空白处关面板）。
+// 键盘快捷键（含 Esc）在 keyboard.mjs，这里不再挂 keydown。
 //
 // 首屏状态有三条路（服务端在 init-game 的 stateMode 里说明走哪条）：
 //   inline —— 一条消息把整盘状态发下来（小棋盘，最常见）
@@ -21,7 +22,7 @@ import {
 } from './board.mjs';
 import { resetView, resizeCanvas } from './camera.mjs';
 import { bindCanvasEvents } from './interactions.mjs';
-import { closeColorPicker, isColorPickerOpen, stopPicking } from './picker.mjs';
+import { closeColorPicker, isColorPickerOpen } from './picker.mjs';
 import { closeBrushRing, showHintPopup, toggleOptionsPanel } from './ring.mjs';
 import { t } from './i18n.mjs';
 import { clearCachedState, markCacheDirty } from './state-cache.mjs';
@@ -32,7 +33,6 @@ import {
     clearPending,
     consumePickJustHandled,
     getCachedState,
-    isPickMode,
     markRingJustClosed,
     menuButton,
     requestRender,
@@ -102,7 +102,7 @@ export function initConnection(options) {
     socket.on('init-game', (data) => {
         const { config, maxColorIndex, rgbSupport, stateRgb, state32, stateMode, rev, epoch, version } = data;
         serverCaps.color = typeof maxColorIndex === 'number';
-        // 版本号给设置弹窗左下角用（“BlockBoard | v1.7.0”）；老服务端不发这个字段，保持空
+        // 版本号给设置弹窗左下角用（“BlockBoard | v1.7.1”）；老服务端不发这个字段，保持空
         serverInfo.version = typeof version === 'string' ? version : '';
         // 状态可能是 stateRgb（新服务端，base64 字符串或二进制附件）或 state32（上一版服务端），
         // 都在说明它支持自定义颜色
@@ -400,19 +400,6 @@ export function bindUiEvents() {
 
     // 设置面板
     menuButton.addEventListener('click', toggleOptionsPanel);
-
-    // Esc：先退出取色模式，再依次收起调色盘与圆环
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape') return;
-
-        if (isPickMode()) {
-            stopPicking();
-            return;
-        }
-
-        closeColorPicker();
-        closeBrushRing();
-    });
 
     // 点空白处收起面板；取色模式下的那次点击已经被画布交互处理过了，不重复处理
     document.addEventListener('click', (e) => {

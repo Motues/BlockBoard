@@ -993,6 +993,55 @@ h1 {
     color: #ff9d9d;
 }
 
+/* 导入选区 JSON：选好文件后选用哪个起点（和登录框一样居中） */
+.dev-import {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 420;
+    width: 320px;
+    padding: 18px 20px;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-align: left;
+}
+
+.dev-import.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, -50%) scale(0.96);
+}
+
+.dev-import-title {
+    font-size: 0.95rem;
+    color: #fff;
+}
+
+.dev-import-info {
+    font-size: 0.78rem;
+    color: #999;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.dev-import-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* 起点选项沿用右键菜单的行样式，只补一圈边框让它看起来可点 */
+.dev-import-actions .dev-menu-item {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.dev-import-footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
 /* 设置弹窗（齿轮按钮，屏幕居中） */
 .settings-modal {
     top: 50%;

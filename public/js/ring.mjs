@@ -151,9 +151,12 @@ export function toggleOptionsPanel() {
     menuButton.setAttribute('aria-expanded', panelOpen ? 'true' : 'false');
 }
 
-// 截图后自动关闭选项面板
+// 关闭选项面板。返回"这次是不是真的收掉了"：Esc 靠它决定还要不要继续往下收
 export function closeOptionsPanel() {
-    if (panelOpen) toggleOptionsPanel();
+    if (!panelOpen) return false;
+
+    toggleOptionsPanel();
+    return true;
 }
 
 // 提示弹窗
@@ -170,8 +173,14 @@ export function showHintPopup() {
     }, 10000);
 }
 
+// 收起帮助弹窗。返回"这次是不是真的收掉了"（Esc 用）
 export function closeHintPopup() {
-    document.getElementById('hint-popup').classList.add('hidden');
+    const hintPopup = document.getElementById('hint-popup');
+
+    if (hintPopup.classList.contains('hidden')) return false;
+
+    hintPopup.classList.add('hidden');
+    return true;
 }
 
 // 画笔变化后刷新圆环状态（悬停光标由 brush.mjs 统一负责）

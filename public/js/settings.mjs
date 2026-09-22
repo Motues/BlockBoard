@@ -89,10 +89,10 @@ function closeLanguageMenu() {
     langValueEl.setAttribute('aria-expanded', 'false');
 }
 
-// 版本号对应的 release 页：https://github.com/Motues/BlockBoard/releases/tag/v1.7.0
+// 版本号对应的 release 页：https://github.com/Motues/BlockBoard/releases/tag/v1.7.1
 const RELEASES_URL = 'https://github.com/Motues/BlockBoard/releases';
 
-// 左下角那行：产品名写在 index.html 里（固定链到仓库），这里把版本号补成 “BlockBoard | v1.7.0”
+// 左下角那行：产品名写在 index.html 里（固定链到仓库），这里把版本号补成 “BlockBoard | v1.7.1”
 // 并链到对应的 release 页。版本号来自服务端 package.json（init-game 的 version）；
 // 老服务端不发这个字段，就把分隔符和版本号一起藏起来，只留产品名。
 function renderVersion() {

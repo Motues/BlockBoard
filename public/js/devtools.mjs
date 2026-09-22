@@ -8,6 +8,9 @@
 //     右键 = 当前选区/区域的菜单
 //   · 闭合区域填充：客户端做 flood fill，碰不到棋盘边缘才算"闭合"，否则报错
 //   · 选区可以填成当前画笔色 / 调色盘里选的颜色，也可以重置为黑、导出为 PNG 或 JSON
+//   · 「导入 JSON」把导出的那种选区 JSON 写回棋盘：起点可以用文件自带的、当前位置
+//     （有选区就是选区左上角，没有就是右键点的那个方块），或者自己点棋盘选；
+//     放不下 / 文件不合法都只报错，不会拿越界坐标去撞服务端
 
 import {
     RIGHT_DRAG_SLOP,
@@ -22,6 +25,7 @@ import {
     setBrushIndex
 } from './brush.mjs';
 import { applyRegionPayload, getGridState, hitTest } from './board.mjs';
+import { valueToColor } from './color.mjs';
 import { onLangChange, t } from './i18n.mjs';
 import { openColorPickerFor, primePickerFromRgb } from './picker.mjs';
 import { renderRegionToCanvas, saveAsPng } from './render.mjs';
@@ -119,6 +123,10 @@ function exitDevMode() {
     setDevMode(false);
     bannerEl.classList.add('hidden');
     closeMenu();
+    // 导入这件事也要收干净：面板关掉、点选起点作废（否则退出后还挂着一个等待状态）
+    importPicking = null;
+    importContext = null;
+    closeImportPanel();
     regionCells = [];
     regionBoundary = [];
     selectionDrag = null;
@@ -134,7 +142,10 @@ const DEV_ERROR_KEYS = {
     'too-large': 'dev.tooLarge',
     'out-of-range': 'dev.outOfRange',
     'bad-range': 'dev.outOfRange',
-    'bad-cell': 'dev.outOfRange'
+    'bad-cell': 'dev.outOfRange',
+    // 导入 JSON 才会遇到的两种：形状不对 / 取值非法，都当成"文件不对"
+    'bad-shape': 'dev.importBadFile',
+    'bad-value': 'dev.importBadFile'
 };
 
 function devErrorMessage(reason, fallback) {
@@ -166,7 +177,8 @@ async function login(password, options = {}) {
         // 记住密码：下次点「开发者工具」就不用再输一遍
         setSavedDevPassword(password);
         enterDevMode();
-        toast(t('dev.on'));
+        // quiet：导入途中发现 token 过期时静默重登用，不必再喊一次"已开启开发者模式"
+        if (!options.quiet) toast(t('dev.on'));
         return { ok: true };
     }
 
@@ -616,7 +628,13 @@ function openSelectionMenu(clientX, clientY) {
 
     pushCustomColorAction(actions, (value) => applyColorChoice(value, t('dev.fillDone')), { x: clientX, y: clientY });
 
-    actions.push({ label: t('dev.exportSelection'), run: exportSelection });
+    // 当前位置 = 选区左上角（有选区时才有意义）
+    actions.push({ label: t('dev.exportPng'), run: exportSelectionImage });
+    actions.push({ label: t('dev.exportJson'), run: exportSelectionJson });
+    actions.push({
+        label: t('dev.importJson'),
+        run: () => requestImportJson({ x: size.rect.x0, y: size.rect.y0 })
+    });
     actions.push({ label: t('dev.clearSelection'), run: clearSelection });
 
     openMenuAt(
@@ -656,6 +674,12 @@ function openRegionMenu(clientX, clientY, col, row) {
         }
     });
 
+    // 没有选区时，"当前位置"就是这个方块（导入 JSON 的左上角落点）
+    actions.push({
+        label: t('dev.importJson'),
+        run: () => requestImportJson({ x: col, y: row })
+    });
+
     openMenuAt(clientX, clientY, t('dev.blockTitle', { c: col + 1, r: row + 1 }), actions);
 }
 
@@ -680,59 +704,421 @@ function currentBrushValue() {
 }
 
 // --- 导出选区 ---
-function exportSelection() {
-    const size = selectionSize(getDevSelection());
-    if (!size.count) {
+// 两个动作分开：菜单里是「导出为图片」「导出为 JSON」，不再一次下载两个文件
+function selectionSizeOrNull() {
+    if (!hasSelection()) {
         toast(t('dev.noSelection'), 'error');
-        return;
+        return null;
     }
 
-    const name = `${size.rect.x0}-${size.rect.y0}_${size.width}x${size.height}`;
+    const size = selectionSize(getDevSelection());
+
+    // 选区留在旧尺寸上（导入换过尺寸又重同步完）时坐标可能已经越界，
+    // 直接读会把 undefined 写进 JSON，这里先挡住
+    if (!selectionInsideBoard(size.rect)) {
+        toast(t('dev.outOfRange'), 'error');
+        return null;
+    }
+
+    return size;
+}
+
+function selectionName(size) {
+    return `${size.rect.x0}-${size.rect.y0}_${size.width}x${size.height}`;
+}
+
+// 选区取值 → 二维数组载荷（导出 JSON 与导入共用同一套形状）
+// 与单元格协议一致：0 黑、1..15 预设编号、>= 16 为 24bit RGB
+function regionPayload(rect) {
     const gridState = getGridState();
-
-    // PNG：复用棋盘绘制，只画选中这一片
-    try {
-        const image = renderRegionToCanvas(size.rect.x0, size.rect.y0, size.width, size.height, 4);
-        image.getContext('2d').fillStyle = 'rgba(0, 0, 0, 0)';
-        saveAsPng(image, `BlockBoard_${name}.png`);
-    } catch (error) {
-        console.error('Failed to export the selection as an image:', error);
-        toast(t('dev.exportFailed'), 'error');
-    }
-
-    // JSON：把取值原样列出来，方便备份或脚本处理
     const cells = [];
-    for (let row = size.rect.y0; row <= size.rect.y1; row++) {
+
+    for (let row = rect.y0; row <= rect.y1; row++) {
         const line = [];
-        for (let col = size.rect.x0; col <= size.rect.x1; col++) {
+        for (let col = rect.x0; col <= rect.x1; col++) {
             line.push(gridState[row * board.cols + col]);
         }
         cells.push(line);
     }
 
-    const payload = {
-        x: size.rect.x0,
-        y: size.rect.y0,
-        width: size.width,
-        height: size.height,
-        // 与单元格协议一致：0 黑、1..15 预设编号、>= 16 为 24bit RGB
+    return {
+        format: 'blockboard-region',
+        version: 1,
+        x: rect.x0,
+        y: rect.y0,
+        width: rect.x1 - rect.x0 + 1,
+        height: rect.y1 - rect.y0 + 1,
         cells
     };
+}
+
+function downloadFile(name, text, mime) {
+    const blob = new Blob([text], { type: mime });
+    const link = document.createElement('a');
+
+    link.download = name;
+    link.href = URL.createObjectURL(blob);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function exportSelectionImage() {
+    const size = selectionSizeOrNull();
+    if (!size) return;
+
+    // PNG：复用棋盘绘制，只画选中这一片
+    try {
+        const image = renderRegionToCanvas(size.rect.x0, size.rect.y0, size.width, size.height, 4);
+        image.getContext('2d').fillStyle = 'rgba(0, 0, 0, 0)';
+        saveAsPng(image, `BlockBoard_${selectionName(size)}.png`);
+        toast(t('dev.exported', { w: size.width, h: size.height }));
+    } catch (error) {
+        console.error('Failed to export the selection as an image:', error);
+        toast(t('dev.exportFailed'), 'error');
+    }
+}
+
+function exportSelectionJson() {
+    const size = selectionSizeOrNull();
+    if (!size) return;
 
     try {
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-        const link = document.createElement('a');
-        link.download = `BlockBoard_${name}.json`;
-        link.href = URL.createObjectURL(blob);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        downloadFile(
+            `BlockBoard_${selectionName(size)}.json`,
+            JSON.stringify(regionPayload(size.rect), null, 2),
+            'application/json'
+        );
+        toast(t('dev.exported', { w: size.width, h: size.height }));
     } catch (error) {
         console.error('Failed to export the selection as JSON:', error);
+        toast(t('dev.exportFailed'), 'error');
+    }
+}
+
+// --- 导入选区 JSON ---
+// 流程：右键菜单点「导入 JSON…」→ 选文件 → 面板里选用哪个起点
+//   · 文件自带的起点（导出时写进去的 x / y）
+//   · 触发菜单时的"当前位置"：有选区就是选区左上角，没有就是右键点的那个方块
+//   · 点棋盘自己选：进入等待状态，左键点一下棋盘定左上角（Esc 取消）
+// 起点放不下就报错（超出棋盘），不会拿越界坐标去撞服务端
+const importFileEl = document.getElementById('dev-import-file');
+const importEl = document.getElementById('dev-import');
+const importInfoEl = document.getElementById('dev-import-info');
+const importActionsEl = document.getElementById('dev-import-actions');
+
+/** 单次 draw 请求最多写多少格（服务端 MAX_REGION_CELLS 是 200000，这里留点余量） */
+const DRAW_CHUNK_CELLS = 100000;
+/** 服务端单次请求的硬上限：宽过它的选区切不开（一行就超了），只能拒掉 */
+const DRAW_MAX_CELLS = 200000;
+/** 选区 JSON 的读取上限：再大就该用 .bbx 备份，而不是往内存里塞 */
+const IMPORT_MAX_BYTES = 32 * 1024 * 1024;
+/** 点选起点时画画面预览的格子上限：再大就只留绿色框（几十万次 fillRect 会卡一下） */
+const IMPORT_PREVIEW_MAX_CELLS = 400000;
+/** 落点预览的透明度：透一点底色出来，和棋盘上真画上去的区分开 */
+const IMPORT_PREVIEW_ALPHA = 0.6;
+
+let importContext = null;   // 触发导入时的"当前位置"起点 { x, y }
+let importPicking = null;   // { data, preview }：正在等用户点棋盘选起点
+
+function isImportPanelOpen() {
+    return !importEl.classList.contains('hidden');
+}
+
+function closeImportPanel() {
+    importEl.classList.add('hidden');
+    importActionsEl.innerHTML = '';
+    importInfoEl.textContent = '';
+}
+
+// 菜单里的「导入 JSON…」：先记下当前位置，再打开文件框（change 时才解析）
+function requestImportJson(origin) {
+    importContext = origin && origin.x >= 0 && origin.y >= 0 ? { x: origin.x, y: origin.y } : null;
+
+    importFileEl.value = '';
+    importFileEl.click();
+}
+
+// 导出的 JSON（以及手写的同形状文件）→ 内部结构；不合法返回 null
+function parseRegionJson(text) {
+    let data = null;
+    try {
+        data = JSON.parse(text);
+    } catch {
+        return null;
     }
 
-    toast(t('dev.exported', { w: size.width, h: size.height }));
+    if (!data || typeof data !== 'object' || !Array.isArray(data.cells)) return null;
+
+    const rows = data.cells;
+    if (rows.length === 0 || !Array.isArray(rows[0])) return null;
+
+    const width = rows[0].length;
+    if (width === 0) return null;
+
+    const cells = [];
+
+    for (const row of rows) {
+        if (!Array.isArray(row) || row.length !== width) return null;
+
+        const line = [];
+        for (const raw of row) {
+            const value = Number(raw);
+            // 取值必须落在单元格协议里：0..0xffffff
+            if (!Number.isInteger(value) || value < 0 || value > RGB_MASK) return null;
+            line.push(value);
+        }
+        cells.push(line);
+    }
+
+    const hasOrigin = Number.isInteger(data.x) && Number.isInteger(data.y) && data.x >= 0 && data.y >= 0;
+
+    return {
+        width,
+        height: rows.length,
+        cells,
+        x: hasOrigin ? data.x : 0,
+        y: hasOrigin ? data.y : 0,
+        hasOrigin
+    };
+}
+
+function pushImportOrigin(label, run) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'dev-menu-item';
+
+    const text = document.createElement('span');
+    text.textContent = label;
+    button.appendChild(text);
+
+    button.addEventListener('click', () => run());
+    importActionsEl.appendChild(button);
+}
+
+function openImportPanel(data) {
+    closeMenu();
+
+    importInfoEl.textContent = data.hasOrigin
+        ? t('dev.importInfo', { w: data.width, h: data.height, x: data.x, y: data.y })
+        : t('dev.importInfoNoOrigin', { w: data.width, h: data.height });
+    importActionsEl.innerHTML = '';
+
+    if (data.hasOrigin) {
+        pushImportOrigin(
+            t('dev.importUseFile', { x: data.x, y: data.y }),
+            () => applyImport(data, data.x, data.y)
+        );
+    }
+
+    if (importContext) {
+        const { x, y } = importContext;
+        pushImportOrigin(t('dev.importUseHere', { x, y }), () => applyImport(data, x, y));
+    }
+
+    pushImportOrigin(t('dev.importPick'), () => beginImportPick(data));
+
+    importEl.classList.remove('hidden');
+}
+
+// 取消导入：正在点选起点的话，把预览出来的选区也一起清掉
+function cancelImport() {
+    const wasPicking = Boolean(importPicking);
+
+    importPicking = null;
+    importContext = null;
+    closeImportPanel();
+
+    if (wasPicking) {
+        setDevSelection(null);
+        regionCells = [];
+        regionBoundary = [];
+        redraw();
+    }
+}
+
+// 点选起点时的落点预览：把 JSON 的取值画成"1 像素 1 格"的离屏 canvas，
+// 落点预览时按棋盘几何整体放大贴上（和平移缩小时的 LOD 同一个思路，别逐格 fillRect 上屏）
+function buildImportPreview(data) {
+    if (data.width * data.height > IMPORT_PREVIEW_MAX_CELLS) return null;
+
+    const preview = document.createElement('canvas');
+    preview.width = data.width;
+    preview.height = data.height;
+
+    const g = preview.getContext('2d');
+
+    for (let row = 0; row < data.height; row++) {
+        const line = data.cells[row];
+
+        for (let col = 0; col < data.width; col++) {
+            g.fillStyle = valueToColor(line[col]);
+            g.fillRect(col, row, 1, 1);
+        }
+    }
+
+    return preview;
+}
+
+function beginImportPick(data) {
+    closeImportPanel();
+
+    importPicking = { data, preview: buildImportPreview(data) };
+    setDevSelection(null);
+    regionCells = [];
+    regionBoundary = [];
+    redraw();
+
+    toast(t('dev.importPicking'));
+}
+
+// 点选起点模式下跟着光标预览落点：光标移到哪，JSON 的左上角就跟到哪
+function previewImport(col, row) {
+    if (!importPicking || col < 0 || row < 0) return;
+
+    const { data } = importPicking;
+    const rect = { x0: col, y0: row, x1: col + data.width - 1, y1: row + data.height - 1 };
+
+    if (hasSelection()) {
+        const current = normalizeRect(getDevSelection());
+        if (current.x0 === rect.x0 && current.y0 === rect.y0 &&
+            current.x1 === rect.x1 && current.y1 === rect.y1) {
+            return;
+        }
+    }
+
+    setDevSelection(rect);
+    redraw();
+
+    // 提示语在点选期间一直挂着（toast 3.2 秒会自己消失，落点在动就再报一次）
+    toast(t('dev.importPicking'));
+}
+
+// 落点放不下就只报错，留在点选模式里让用户换个地方点（Esc 取消）
+function tryImportAt(col, row) {
+    if (!importPicking || col < 0 || row < 0) return;
+
+    const { data } = importPicking;
+
+    if (col + data.width > board.cols || row + data.height > board.rows) {
+        toast(t('dev.outOfRange'), 'error');
+        return;
+    }
+
+    importPicking = null;
+    applyImport(data, col, row);
+}
+
+// 会话过期时用本地保存的密码静默重登一次。
+// 导入途中被踢出开发者模式太突兀（服务端重启、token 到期都会 401），而且"导入"不是
+// 登出入口：重登失败也只提示，不清 token、不退模式，由用户自己决定要不要退出。
+async function trySilentRelogin() {
+    const saved = getSavedDevPassword();
+    if (!saved) return false;
+
+    try {
+        const result = await login(saved, { silent: true, quiet: true });
+        return result.ok;
+    } catch {
+        return false;
+    }
+}
+
+// 逐格写入的单次请求：401 时（且允许时）静默重登一次再原样重试这一块
+async function postDrawRequest(payload, allowRelogin) {
+    const { status, data: result } = await api('/api/dev/draw', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+
+    if (status === 401 && allowRelogin && await trySilentRelogin()) {
+        return postDrawRequest(payload, false);
+    }
+
+    return { status, data: result };
+}
+
+// 逐格写到服务端：一次请求最多 DRAW_CHUNK_CELLS 格，按整行切（起点跟着往下挪），
+// 响应的 range 里颜色写在 runs 的每一段上，直接在本机套用，不用等广播绕一圈
+async function applyImport(data, originX, originY) {
+    closeImportPanel();
+    importContext = null;
+
+    if (originX < 0 || originY < 0 ||
+        originX + data.width > board.cols || originY + data.height > board.rows) {
+        toast(t('dev.outOfRange'), 'error');
+        return false;
+    }
+
+    if (data.width > DRAW_MAX_CELLS) {
+        toast(t('dev.tooLarge'), 'error');
+        return false;
+    }
+
+    const rowsPerChunk = Math.max(1, Math.floor(DRAW_CHUNK_CELLS / data.width));
+
+    try {
+        for (let offset = 0; offset < data.height; offset += rowsPerChunk) {
+            const rows = data.cells.slice(offset, offset + rowsPerChunk);
+
+            const { status, data: result } = await postDrawRequest({
+                x: originX,
+                y: originY + offset,
+                width: data.width,
+                height: rows.length,
+                cells: rows
+            }, true);
+
+            if (status === 401) {
+                // 重登也失败：只提示，不退出开发者模式
+                toast(t('dev.sessionExpired'), 'error');
+                return false;
+            }
+
+            if (status !== 200 || !result.ok) {
+                toast(devErrorMessage(result.error, result.message), 'error');
+                return false;
+            }
+
+            if (result.range) applyRegionPayload(result.range);
+        }
+    } catch {
+        toast(t('dev.opFailed'), 'error');
+        return false;
+    }
+
+    clearTargets();
+    toast(t('dev.importDone', { w: data.width, h: data.height }));
+    return true;
+}
+
+// 文件框选中文件后：读文本 → 校验 → 弹起点面板
+async function onImportFilePicked() {
+    const file = importFileEl.files && importFileEl.files[0];
+    if (!file) return;
+
+    if (file.size > IMPORT_MAX_BYTES) {
+        toast(t('dev.tooLarge'), 'error');
+        return;
+    }
+
+    let text = '';
+    try {
+        text = await file.text();
+    } catch {
+        toast(t('dev.importBadFile'), 'error');
+        return;
+    }
+
+    const data = parseRegionJson(text);
+    if (!data) {
+        toast(t('dev.importBadFile'), 'error');
+        return;
+    }
+
+    openImportPanel(data);
 }
 
 // --- 选区绘制（挂在渲染循环里）---
@@ -748,8 +1134,21 @@ function paintDevOverlay(now, cam) {
         const right = cam.px(board.padding + norm.x1 * pitch + board.cellSize);
         const bottom = cam.py(board.padding + norm.y1 * pitch + board.cellSize);
 
-        ctx.fillStyle = 'rgba(76, 209, 55, 0.18)';
-        ctx.fillRect(x, y, right - x, bottom - y);
+        // 点选导入起点时：先把 JSON 的画面半透明贴上去（有画面就不铺绿色底色，免得串色），
+        // 绿色虚线框无论如何都留着
+        const preview = importPicking ? importPicking.preview : null;
+
+        if (preview) {
+            ctx.save();
+            ctx.globalAlpha = IMPORT_PREVIEW_ALPHA;
+            // 一格一像素的位图放大贴，关掉插值才是方块而不是糊成一团
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(preview, x, y, right - x, bottom - y);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = 'rgba(76, 209, 55, 0.18)';
+            ctx.fillRect(x, y, right - x, bottom - y);
+        }
 
         ctx.save();
         ctx.strokeStyle = '#4cd137';
@@ -818,6 +1217,9 @@ function extendSelection(col, row) {
 function handleLeftDown(e, col, row) {
     closeMenu();
 
+    // 导入面板开着（模态）或正在点选起点：这次按下不参与框选
+    if (isImportPanelOpen() || importPicking) return;
+
     leftPress = {
         x: e.clientX,
         y: e.clientY,
@@ -828,6 +1230,14 @@ function handleLeftDown(e, col, row) {
 }
 
 function handleLeftMove(e, col, row) {
+    // 点选起点：跟着光标预览落点
+    if (importPicking) {
+        previewImport(col, row);
+        return;
+    }
+
+    if (isImportPanelOpen()) return;
+
     if (selectionDrag) {
         extendSelection(col, row);
         return;
@@ -843,6 +1253,14 @@ function handleLeftMove(e, col, row) {
 }
 
 function handleLeftUp(e, col, row) {
+    // 点选起点：这一下就是起点，不再当框选 / 方块菜单处理
+    if (importPicking) {
+        tryImportAt(col, row);
+        return;
+    }
+
+    if (isImportPanelOpen()) return;
+
     if (selectionDrag) {
         extendSelection(col, row);
         selectionDrag = null;
@@ -897,6 +1315,9 @@ function cancelPendingPress() {
 function handleContextMenu(e) {
     cancelPendingPress();
 
+    // 导入面板开着时不弹新菜单（模态，避免把这次右键当成新操作的起点）
+    if (isImportPanelOpen() || importPicking) return;
+
     const index = hitTest(e.clientX, e.clientY);
 
     if (index < 0) {
@@ -922,6 +1343,35 @@ function bindInteraction() {
     // 指针带着按下的左键离开窗口 / 窗口失焦：那次松手收不到了，收尾一下
     devEvents.addEventListener('leftcancel', handleLeftCancel);
     devEvents.addEventListener('contextmenu', (e) => handleContextMenu(e.detail.event));
+    // Esc：由 keyboard.mjs 统一转发（免得两边各写一份 Esc 逻辑）
+    devEvents.addEventListener('dismiss', dismissDevOverlays);
+}
+
+// Esc 的开发者侧收尾：按"最上面那层"的顺序一次收一个
+//   · 登录框 → 导入面板（含点选起点）→ 右键菜单 → 选区 / 闭合区域高亮
+// 由 keyboard.mjs 往 devEvents 上转 'dismiss' 调过来，返回是否真的收掉了什么
+function dismissDevOverlays() {
+    if (!loginEl.classList.contains('hidden')) {
+        closeDevPanel();
+        return true;
+    }
+
+    if (importPicking || isImportPanelOpen()) {
+        cancelImport();
+        return true;
+    }
+
+    if (menuOpen) {
+        closeMenu();
+        return true;
+    }
+
+    if (hasSelection() || regionCells.length > 0) {
+        clearSelection();
+        return true;
+    }
+
+    return false;
 }
 
 // --- 事件绑定 ---
@@ -946,6 +1396,10 @@ export function bindDevEvents() {
         if (e.key === 'Enter') submitLogin();
         if (e.key === 'Escape') closeDevPanel();
     });
+
+    // 导入选区 JSON：选完文件弹起点面板，取消就整件事作废
+    importFileEl.addEventListener('change', onImportFilePicked);
+    document.getElementById('dev-import-cancel').addEventListener('click', cancelImport);
 
     // 换语言时，登录框里已经显示出来的提示也要跟着换
     onLangChange(refreshLoginHint);

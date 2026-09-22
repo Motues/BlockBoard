@@ -28,7 +28,7 @@
 
 ## 静态资源与缓存
 
-`public/**` 由 `serveStatic` 托管；前面挂了一层中间件，给 `.html / .js / .mjs / .css / .json` 加 `Cache-Control: no-cache`。Hono 的 serveStatic 不发 ETag、也不处理条件请求，实际效果接近“每次都重新下载”，本地/局域网可忽略。
+`public/**` 由 `serveStatic` 托管；前面挂了一层中间件，给 `.html / .js / .mjs / .css / .json / .txt` 加 `Cache-Control: no-cache`。Hono 的 serveStatic 不发 ETag、也不处理条件请求，实际效果接近“每次都重新下载”，本地/局域网可忽略。`.txt` 只有 `public/llms.txt`（给 AI 的接口说明，见 `doc/protocol.md`），改了要立刻能拿到。
 
 为什么必须有：项目没有打包步骤，模块之间是裸相对路径 `import`（`./shared.mjs`），URL 上挂不了版本号。只靠 `Last-Modified` 的话，浏览器会启发式缓存旧模块，出现“新页面 + 旧模块”，整个模块图加载失败，表现是画布和在线人数都不出来。普通刷新未必恢复。踩过一次，别删这层中间件。
 

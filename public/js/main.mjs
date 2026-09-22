@@ -3,6 +3,8 @@
 //   shared ← board / camera / render / interactions / ring / picker / connection
 //   模块之间：ring → picker → brush → cursor → shared
 //             i18n ← settings ← devtools（toast / edge-hint 独立，只依赖 i18n）
+//             keyboard 是快捷键的汇总点：读 brush / picker / ring，开发者工具那层
+//             走 devEvents 的 'dismiss' 转发，不 import devtools
 //             state-cache 是叶子（不 import 任何模块）：shared 在顶层 await 里读它，
 //             connection 往里报"状态变了"，main 负责把"当前状态 + epoch/rev"喂给它写盘
 
@@ -19,6 +21,7 @@ import {
 } from './ring.mjs';
 import { bindUiEvents, initConnection } from './connection.mjs';
 import { bindDevEvents } from './devtools.mjs';
+import { bindKeyboardShortcuts } from './keyboard.mjs';
 import { initEdgeHint } from './edge-hint.mjs';
 import { bindSettingsEvents } from './settings.mjs';
 import { initBoardLoader } from './loader.mjs';
@@ -89,6 +92,8 @@ initConnection();
 bindUiEvents();
 bindDevEvents();
 bindSettingsEvents();
+// 键盘快捷键（Esc / C / I / 1-8）是全局的，接在其它 UI 绑定之后
+bindKeyboardShortcuts();
 
 // Edge 的鼠标手势会抢走右键拖动（网页关不掉），桌面版 Edge 上提示一次
 initEdgeHint();

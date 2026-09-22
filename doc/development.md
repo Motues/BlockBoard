@@ -29,7 +29,9 @@
 - i18n 动态文字渲染时 `t()`；帮助弹窗两套文案都要改。
 - 导入失败回滚；multipart 按 latin1 解析；尺寸重排两个入口一致。
 - 大棋盘不合并相邻同色 `fillRect`。
-- `state-cache.mjs` 保持叶子；`interactions` 不 import `devtools`。
+- `state-cache.mjs` 保持叶子；`interactions` 不 import `devtools`（`keyboard` 走 `devEvents` 的 `dismiss`）。
+- `/api/dev/draw` 与选区 JSON 同形状（`{ x, y, width, height, cells }`）；逐格写入的广播不带消息级 `value`/`rgb`/`isBlack`，颜色在 `runs` 每段里；**一次改动的 runs 只有一套基准**（编码基准 = 广播 `start` = 响应 `range.start`），否则客户端本机套用会和广播错开。
+- `public/llms.txt` 不含密码、不写死棋盘尺寸；接口改了必须同步改它。
 
 ## 验证矩阵
 
@@ -77,8 +79,9 @@
 - 桌面：左键涂色、右键短按圆环、右键长按平移、滚轮缩放。
 - 触屏：轻点涂色、长按圆环、单指拖动、双指捏合。
 - 取色器：吸管光标、格子放大、浮窗颜色、点选后不误涂色。
+- 快捷键：Esc 从最上面那层往下收（取色模式 → 调色盘 → 圆环 → 选项面板 → 开发者那层 → 帮助弹窗）；C 居中弹调色盘；I 进/出吸管；1–8 切预设色并进「最近使用」；在色号框 / 密码框里打字时字母数字都不触发。
 - 设置弹窗：语言预览/关闭回退、密码保存、数据备份。
-- 帮助弹窗：桌面/触屏两套文案正确。
+- 帮助弹窗：桌面/触屏两套文案正确（`hint.shortcuts` 只在桌面那份）。
 - Edge 手势提示：只桌面版 Edge 出现，点「知道了」后不再提示。
 - 显隐动画：弹窗淡出淡入，菜单图标交叉过渡。
 - 大棋盘：百万格平移/缩放不卡死，LOD 生效。
@@ -87,10 +90,22 @@
 
 - 登录、退出、失败 5 次锁定、token 过期、服务端重启 token 失效。
 - 矩形/闭合区域批量改色，`range` 本机套用颜色正确。
+- 导出选区是两个菜单项：PNG 只下图片、JSON 只下 JSON，文件名带起点与尺寸。
+- 导入 JSON：选文件 → 起点面板三种起点都能用；文件自带起点越界、当前位置越界、点选起点越界都只报错（点选模式留在原地可换点，Esc / 取消退出）；导入后 `update-region` 广播到其它客户端颜色正确。
+- 导入只画一遍：本机套用（响应 `range`）与广播是同一串 runs、同一基准，区域左上角本来就是目标色时也不能整体偏移。
+- 导入后仍在开发者模式：token 失效会静默重登并重试那一块；重登失败只提示，不退模式。
+- 点选起点时画面上跟着一个半透明（0.6）的落点预览，绿色虚线框照旧。
+- 超过 10 万格的 JSON 会被切成多次 `/api/dev/draw` 请求，最终结果与文件一致。
 - 导出 `.bbx` 不含 `devPassword`。
 - 导入二次确认，覆盖后 `devPassword` 保留，`port` 不热改。
 - BBEX magic/版本/长度/校验和任一不符返回 400 `bad-package`。
 - 上传大小限制、multipart 二进制不损坏。
+
+### AI 接口
+
+- `GET /llms.txt` 返回 200 `text/plain` 且带 `Cache-Control: no-cache`，内容里的端点、颜色编码、上限与实际一致。
+- `POST /api/dev/draw`：按导出的选区 JSON 原样请求能画出同样的图；`width`/`height` 对不上、行不等长、取值越界、越界坐标分别回 `bad-shape` / `bad-shape` / `bad-value` / `out-of-range`；无 token 回 401。
+- 多色写入的 `update-region` 在别的客户端落地颜色正确（`runs` 每段自带颜色）。
 
 ## 常见坑索引
 
@@ -114,3 +129,5 @@
 | i18n 缓存了 `t()` 结果 | `docs/frontend.md` 国际化 |
 | 导入不回滚 | `docs/protocol.md` 数据导出/导入 |
 | multipart 改 UTF-8 损坏二进制 | `docs/protocol.md` 数据导出/导入 |
+| 导入 JSON 越界写进棋盘 | `docs/protocol.md` 开发者工具 HTTP API、`docs/frontend.md` 客户端开发者模式交互 |
+| `/llms.txt` 与接口漂了 | `docs/protocol.md` 给 AI 的绘图说明 |
