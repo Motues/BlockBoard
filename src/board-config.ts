@@ -6,7 +6,7 @@
 // 所以别把 rows / cols 缓存成常量 —— 用 getTotalSquares() / publicConfig() 取当前值。
 //
 // 本模块是全项目**第一个碰配置**的地方（server.ts 经由 board-state 间接导入它），
-// 所以「文件不在就照 example 生成一份」和「PORT 环境变量压过配置里的 port」都放在这里，
+// 所以「文件不在就写一份默认的」和「PORT 环境变量压过配置里的 port」都放在这里，
 // 这样其它模块 import 到的 liveConfig 一开始就已经是生效值。
 
 import fs from 'fs';
@@ -16,9 +16,8 @@ import type configShape from '../game-config.json';
 
 /** 仓库根目录（ts-node 跑 src/ 与编译后跑 dist/ 都是一级） */
 const ROOT_DIR = path.join(__dirname, '..');
-/** game-config.json：没有就照 example 生成（board-persist.ts 的写盘用的是同一个路径） */
+/** game-config.json（board-persist.ts 的写盘用的是同一个路径） */
 const CONFIG_FILE = path.join(ROOT_DIR, 'game-config.json');
-const EXAMPLE_FILE = path.join(ROOT_DIR, 'game-config.json.example');
 
 /** game-config.json 的形状：服务端专用字段（devPassword）也在里面 */
 export interface GameConfig {
@@ -40,21 +39,30 @@ export interface LockedConfigFields {
   port: boolean;
 }
 
+/** 缺配置文件时写出来的那份默认配置。别在这里放 devPassword */
+const DEFAULT_CONFIG: GameConfig = {
+  rows: 100,
+  cols: 200,
+  cellSize: 25,
+  port: 3000,
+  devPassword: '',
+  devSessionHours: 8
+};
+
 /**
- * 首次启动（仓库里没有 game-config.json）：照 game-config.json.example 复制一份。
- * 没有 example（或者写不进去）不是致命的 —— 随后的 loadConfig 会给出自己的报错。
- * 已经存在就一个字节都不动。
+ * 没有 game-config.json 就写一份默认的（正常 clone 下来它就在，进版本库了）。
+ * 写不进去不是致命的：随后的 loadConfig 会给出自己的报错。已经存在就一个字节都不动。
  */
 function ensureConfigFile(): void {
   if (fs.existsSync(CONFIG_FILE)) return;
 
   try {
-    fs.copyFileSync(EXAMPLE_FILE, CONFIG_FILE);
-    console.log('game-config.json was missing — created one from game-config.json.example');
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n', 'utf-8');
+    console.log('game-config.json was missing — wrote the default config');
   } catch (error) {
     console.error(
-      'game-config.json is missing and game-config.json.example could not be copied: ' +
-      `${(error as Error).message} / 缺少 game-config.json，且无法从 game-config.json.example 生成`
+      `game-config.json is missing and the default could not be written: ${(error as Error).message}` +
+      ' / 缺少 game-config.json，且无法写入默认配置'
     );
   }
 }
@@ -65,7 +73,7 @@ ensureConfigFile();
  * 读配置文件。
  * 这里**刻意不用** `import rawConfig from '../game-config.json'`：那是静态 require，
  * 会在本模块（以及 ensureConfigFile）跑起来之前就执行，文件不存在时直接
- * `MODULE_NOT_FOUND` 崩掉 —— 首启生成那一步就没机会跑了。
+ * `MODULE_NOT_FOUND` 崩掉 —— 写默认配置那一步就没机会跑了。
  * 类型仍然取自那份 JSON（`import type` 编译后不留东西）。
  */
 function loadConfig(): typeof configShape {
@@ -74,7 +82,7 @@ function loadConfig(): typeof configShape {
   } catch (error) {
     throw new Error(
       `Cannot read ${CONFIG_FILE} (${(error as Error).message}) / 读不到 game-config.json：` +
-      '确认它存在且是合法 JSON，或者参考 game-config.json.example 重新生成一份'
+      '确认它存在且是合法 JSON（删掉它重启，服务会重新写一份默认的）'
     );
   }
 }

@@ -40,12 +40,12 @@
 - 浏览器 Console 无模块加载失败。
 - Network 面板：JS/CSS 是压缩后一行；响应带 `Cache-Control: no-cache`。
 - 普通刷新、强刷、改模块后刷新都不出现“新页面 + 旧模块”。
-- 没有 `game-config.json` 时首启能照 `game-config.json.example` 生成并正常起来。
+- 没有 `game-config.json` 时首启能写出一份默认配置并正常起来（删掉文件重启即可验证）。
 - 端口优先级：裸跑用配置里的 `port`；`PORT=xxxx` 时日志与 `listen` 都用环境变量那个（非法 `PORT` 退回配置文件并告警）。
 
 ### Docker
 
-- 本机装不了 Docker 时，至少逐项核对 `Dockerfile` 的 COPY 清单：`dist`、`public`、`game-config.json`、`package.json` + `pnpm-lock.yaml` 缺一不可（漏掉 `public` 前端整块发不出去）。
+- 本机装不了 Docker 时，至少核对 `Dockerfile` 里每个 `COPY` 的源文件都真的在仓库里（`dist` 由 builder 产出，`public`、`game-config.json`、`package.json` + `pnpm-lock.yaml` 来自上下文）。少一个文件不是构建失败在那一层，而是**加载构建定义时**就报 `"/xxx": not found`。
 - `docker build` 后启动，容器日志里端口是 `3000` 且 `from PORT environment variable`。
 - 改宿主机 `./game-config.json` 里的 `port` 成别的值，重启容器后监听端口仍是 3000。
 - 导入一份 `port` 不同的备份：落盘的配置里 `port` 保持 3000，服务不用重启。

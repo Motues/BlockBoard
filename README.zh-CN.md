@@ -13,7 +13,6 @@
 ```bash
 git clone https://github.com/Motues/BlockBoard.git
 cd BlockBoard
-cp game-config.json.example game-config.json # 根据需求修改
 pnpm install
 pnpm build
 pnpm start
@@ -21,7 +20,7 @@ pnpm start
 
 然后打开 http://localhost:3000
 
-（`game-config.json` 不存在时会自动照 `game-config.json.example` 生成一份，所以第一次也可以直接跳过 `cp` 那步。）
+（`game-config.json` 随仓库提供，按需改即可；删掉它重启会重新写一份默认配置。）
 
 ### Docker
 
@@ -45,7 +44,7 @@ docker compose up -d
 
 ## 配置
 
-服务端配置写在 `game-config.json`（可参考 `game-config.json.example`）：
+服务端配置写在 `game-config.json`（随仓库提供的默认值都是安全的，不含密码）：
 
 | 字段 | 说明 |
 | --- | --- |

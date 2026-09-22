@@ -21,8 +21,8 @@ pnpm start
 
 Then open http://localhost:3000
 
-(If `game-config.json` is missing it is created from `game-config.json.example` on startup, so the
-`cp` step can be skipped on a first run.)
+(`game-config.json` ships with the repo, edit it as needed; delete it and restart to get the
+defaults back.)
 
 ### Docker
 
@@ -51,7 +51,7 @@ docker compose up -d
 
 ## Configuration
 
-The server reads `game-config.json` (see `game-config.json.example`):
+The server reads `game-config.json` (the copy in the repo holds safe defaults, no password):
 
 | Name | Description |
 | --- | --- |

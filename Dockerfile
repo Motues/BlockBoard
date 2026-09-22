@@ -30,7 +30,6 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 # public 不在 dist 里（没有打包步骤）
 COPY --chown=node:node public ./public
 COPY --chown=node:node game-config.json ./game-config.json
-COPY --chown=node:node game-config.json.example ./game-config.json.example
 COPY --chown=node:node package.json pnpm-lock.yaml ./
 
 RUN corepack enable \

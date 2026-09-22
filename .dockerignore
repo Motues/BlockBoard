@@ -12,3 +12,4 @@ data
 Thumbs.db
 /doc/images
 /game-config.local.json
+/game-config.json.example
