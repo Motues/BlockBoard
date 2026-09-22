@@ -37,6 +37,7 @@ import {
     menuButton,
     requestRender,
     serverCaps,
+    serverInfo,
     setSyncRev,
     socket,
     startSwitch,
@@ -99,8 +100,10 @@ export function initConnection(options) {
     connectionBound = true;
 
     socket.on('init-game', (data) => {
-        const { config, maxColorIndex, rgbSupport, stateRgb, state32, stateMode, rev, epoch } = data;
+        const { config, maxColorIndex, rgbSupport, stateRgb, state32, stateMode, rev, epoch, version } = data;
         serverCaps.color = typeof maxColorIndex === 'number';
+        // 版本号给设置弹窗左下角用（“BlockBoard | v1.7.0”）；老服务端不发这个字段，保持空
+        serverInfo.version = typeof version === 'string' ? version : '';
         // 状态可能是 stateRgb（新服务端，base64 字符串或二进制附件）或 state32（上一版服务端），
         // 都在说明它支持自定义颜色
         serverCaps.rgb = rgbSupport === true ||

@@ -124,6 +124,11 @@ export const serverCaps = {
     rgb: false    // 认识自定义 24bit 颜色
 };
 
+// --- 服务端信息（收到 init-game 后确定）---
+export const serverInfo = {
+    version: '' // 服务端 package.json 里的版本号，设置弹窗左下角显示；老服务端没这个字段就为空
+};
+
 // --- 取色器（吸管）---
 let pickMode = false;          // 是否处于取色模式
 let pickJustHandled = false;   // 这一次点击由取色处理了，别让"点外面关面板"的逻辑再处理一遍

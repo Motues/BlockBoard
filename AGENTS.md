@@ -64,7 +64,7 @@
 | `public/js/devtools.mjs`、`settings.mjs` | `doc/frontend.md`、`doc/protocol.md`、密码存取、导入导出、i18n、移动端隐藏/入口 |
 | `public/js/i18n.mjs`、`index.html` 文案 | `doc/frontend.md` 国际化、所有 `data-i18n`、帮助弹窗两套文案 |
 | `public/styles.css` | `doc/frontend.md` 显隐动画、`.hidden`、`.glass-panel`、菜单图标交叉过渡 |
-| `game-config.json`、配置结构 | `doc/architecture.md`、`doc/state-format.md`、`liveConfig`、`publicConfig()`、`getTotalSquares()` |
+| `game-config.example.json`（首启种子）/ `data/config/game-config.json`（生效）、配置结构 | `doc/architecture.md`、`doc/state-format.md`、`liveConfig`、`publicConfig()`、`getTotalSquares()` |
 | 导入/导出/尺寸变更 | `doc/protocol.md`、`doc/state-format.md`、`regridState` 两个入口、`gridState` 引用、客户端重同步 |
 
 ## 怎么验证

@@ -3,7 +3,7 @@
 /data/
 .env
 
-# game-config.json 进版本库（compose 默认把它绑定挂载出来，clone 下来就能直接起）。
-# 改过的本地配置会一直显示为 modified，别把自己的 devPassword 提交上去；
-# 想留一份自己的配置又不被跟踪就放到 game-config.local.json。
+# 生效配置是 data/config/game-config.json（/data/ 整个被忽略），仓库里只有首启种子
+# game-config.example.json；种子不含密码，改它不生效。想留一份自己的配置又不被跟踪就放到
+# game-config.local.json。
 game-config.local.json

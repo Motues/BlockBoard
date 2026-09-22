@@ -1192,6 +1192,13 @@ h1 {
     color: inherit;
     text-decoration: underline;
     text-underline-offset: 2px;
+    /* 深色面板上“颜色变深”= 从默认那层灰变成正文的高对比色（hover 才提亮，
+       否则左下角这行会一直抢眼） */
+    transition: color 0.15s ease-out;
+}
+
+.settings-made-by a:hover {
+    color: var(--text-color, #ffffff);
 }
 
 /* 数据备份：导出 / 导入（用上面那栏的开发者密码 + 打包文件） */

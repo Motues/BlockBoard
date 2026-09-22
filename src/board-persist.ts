@@ -2,7 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { GameConfig, getTotalSquares, liveConfig } from './board-config';
+import { CONFIG_FILE_PATH, GameConfig, getTotalSquares, liveConfig } from './board-config';
 import {
   SourceDims,
   buildSaveFile,
@@ -15,8 +15,8 @@ const DATA_DIR = path.join(__dirname, '../data');
 const DATA_FILE = path.join(DATA_DIR, 'board-state.dat');
 // 存档对应的棋盘尺寸：改了 game-config.json 后靠它还原旧存档的行列数
 const META_FILE = path.join(DATA_DIR, 'board-size.json');
-/** game-config.json 在仓库根目录（dist/server.js 的上一级） */
-const CONFIG_FILE = path.join(__dirname, '../game-config.json');
+/** 生效配置文件：`data/config/game-config.json`。路径由 board-config 给出，别在这里另写一份。 */
+const CONFIG_FILE = CONFIG_FILE_PATH;
 
 export interface LoadedBoard {
   state: Uint32Array;
@@ -55,9 +55,10 @@ export function writeSavedDims(): void {
  * 主要是 **挂载点**：Linux 对 mount point 的 rename 一律返回 EBUSY（Node 报
  * "EBUSY: resource busy or locked"）。Docker 把**单个文件**挂进容器就是这样 —— 不管
  * `./game-config.json:/app/game-config.json` 还是命名卷挂在文件上，目标都是挂载点，
- * `.tmp` 写得进去、`rename` 换不过去（见 docker-compose.yml）。另外跨文件系统的绑定挂载会
- * 返回 EXDEV，Docker Desktop（Windows / macOS）的挂载常见 EPERM；目录不可写但文件可写时
- * rename 报 EACCES，而原地覆写只需要文件本身的写权限。
+ * `.tmp` 写得进去、`rename` 换不过去。现在配置在 `data/config/` 里、整个 `data/` 是目录挂载，
+ * 正常情况走不到这条路；留着重退是为了「有人又把单个文件挂进来」和只读根文件系统。
+ * 另外跨文件系统的绑定挂载会返回 EXDEV，Docker Desktop（Windows / macOS）的挂载常见 EPERM；
+ * 目录不可写但文件可写时 rename 报 EACCES，而原地覆写只需要文件本身的写权限。
  *
  * 不在这里的错误码（ENOSPC / EROFS / ENOENT 等）直接抛出去：原地覆写救不了，
  * 反而可能把文件截断成半份。
@@ -99,6 +100,10 @@ export function writeFileAtomic(
   data: string | Buffer,
   encoding: BufferEncoding = 'utf-8'
 ): void {
+  // 目标目录不在就建出来：首启的 data/config/ 由 board-config 的 ensureConfigFile 建，
+  // 这里再兜一次（运行期被删掉、或者换了个新的空 data 挂载）。
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
   // 已经知道 rename 换不掉（挂载点 / 目录只读）：直接写，省掉一次与目标等大的写入
   if (inPlacePaths.has(targetPath)) {
     fs.writeFileSync(targetPath, data, encoding);
@@ -146,13 +151,13 @@ export function writeFileAtomic(
   }
 }
 
-// 把一份配置写回 game-config.json（先写 .tmp 再 rename，原子替换；目标被挂载时原地覆写，
-// 见 writeFileAtomic）。数据导入用它落盘；其它字段原样保留，缺字段就用当前生效值补上。
+// 把一份配置写回 data/config/game-config.json（先写 .tmp 再 rename，原子替换；目标被挂载时
+// 原地覆写，见 writeFileAtomic）。数据导入用它落盘；其它字段原样保留，缺字段就用当前生效值补上。
 export function writeGameConfig(config: GameConfig): void {
   writeFileAtomic(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
-/** game-config.json 的绝对路径（导出时读原始文件用） */
+/** 生效配置文件（data/config/game-config.json）的绝对路径（导出时读原始文件用） */
 export function gameConfigFilePath(): string {
   return CONFIG_FILE;
 }

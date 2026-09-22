@@ -11,6 +11,7 @@
 
 import { getLang, onLangChange, setLang, t, LANGUAGES } from './i18n.mjs';
 import { closeOptionsPanel } from './ring.mjs';
+import { serverInfo } from './shared.mjs';
 import { toast } from './toast.mjs';
 
 const DEV_PASSWORD_KEY = 'blockboard-dev-password';
@@ -27,6 +28,8 @@ const exportButton = document.getElementById('settings-export');
 const importButton = document.getElementById('settings-import');
 const importInput = document.getElementById('settings-import-file');
 const transferStatusEl = document.getElementById('settings-transfer-status');
+const versionEl = document.getElementById('settings-version');
+const versionSeparatorEl = document.getElementById('settings-version-sep');
 
 let open = false;
 // 打开弹窗时的语言：取消时退回去
@@ -86,6 +89,25 @@ function closeLanguageMenu() {
     langValueEl.setAttribute('aria-expanded', 'false');
 }
 
+// 版本号对应的 release 页：https://github.com/Motues/BlockBoard/releases/tag/v1.7.0
+const RELEASES_URL = 'https://github.com/Motues/BlockBoard/releases';
+
+// 左下角那行：产品名写在 index.html 里（固定链到仓库），这里把版本号补成 “BlockBoard | v1.7.0”
+// 并链到对应的 release 页。版本号来自服务端 package.json（init-game 的 version）；
+// 老服务端不发这个字段，就把分隔符和版本号一起藏起来，只留产品名。
+function renderVersion() {
+    const version = serverInfo.version;
+    const known = Boolean(version);
+
+    versionEl.hidden = !known;
+    versionSeparatorEl.hidden = !known;
+
+    if (!known) return;
+
+    versionEl.textContent = `v${version}`;
+    versionEl.href = `${RELEASES_URL}/tag/v${version}`;
+}
+
 // --- 弹窗 ---
 export function isSettingsOpen() {
     return open;
@@ -94,6 +116,7 @@ export function isSettingsOpen() {
 export function openSettingsPanel() {
     openedLang = getLang();
     renderLanguage();
+    renderVersion();
     closeLanguageMenu();
     passwordEl.value = getSavedDevPassword();
 

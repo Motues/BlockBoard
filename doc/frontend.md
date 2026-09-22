@@ -36,7 +36,7 @@
 
 ## 功能行为
 
-设置弹窗（`settings.mjs`）三块：语言下拉、开发者密码、数据备份。语言边选边生效（预览），点「关闭」退回打开时那一种；密码与数据备份密码不写进服务端，但只有点「保存」才落盘（`blockboard-dev-password`）。数据备份用同一个开发者密码，不再单独要。
+设置弹窗（`settings.mjs`）三块：语言下拉、开发者密码、数据备份。语言边选边生效（预览），点「关闭」退回打开时那一种；密码与数据备份密码不写进服务端，但只有点「保存」才落盘（`blockboard-dev-password`）。数据备份用同一个开发者密码，不再单独要。左下角是 `BlockBoard | v1.7.0`：两个链接都写在 `index.html` 里（产品名 → 仓库），版本号在 `openSettingsPanel()` 里取 `shared.mjs` 的 `serverInfo.version`（来自 `init-game` 的 `version`，即服务端 `package.json` 的版本）填进 `#settings-version`，并拼成 `releases/tag/v<版本>` 的 href；老服务端不发版本号就把分隔符和版本号一起 `hidden`。hover 时两个链接都由默认的灰变成正文色（`.settings-made-by a:hover`，见 `public/styles.css`）。这行是语言无关的，不参与 i18n。
 
 画笔颜色：
 

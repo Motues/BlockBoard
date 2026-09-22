@@ -10,10 +10,12 @@ A real-time online block board
 
 ## Deployment
 
+# Node.js
+
 ```bash
 git clone https://github.com/Motues/BlockBoard.git
 cd BlockBoard
-vim game-config.json # 
+vim game-config.example.json # Config file
 pnpm install
 pnpm build
 pnpm start
@@ -21,43 +23,22 @@ pnpm start
 
 Then open http://localhost:3000
 
-(`game-config.json` ships with the repo, edit it as needed; delete it and restart to get the
-defaults back.)
+> The live config is `data/config/game-config.json`: on first start the `game-config.example.json`
+seeded in the repo is copied there, and that copy is what you edit from then on. Delete it and restart to regenerate it from the seed.
 
 ### Docker
 
 ```bash
-git clone https://github.com/Motues/BlockBoard.git
-cd BlockBoard
+wget https://raw.githubusercontent.com/Motues/blockboard/main/docker-compose.yml
 docker compose up -d
 ```
 
-- Image: `ghcr.io/motues/blockboard:latest`. The **internal port is fixed at 3000** and cannot be
-  changed from the config file (the `PORT` environment variable wins). To expose a different port,
-  edit the left side of the mapping in `docker-compose.yml`, e.g. `8080:3000`, then open
-  http://localhost:8080
-- The config lives in the `game-config` Docker named volume, mounted at `/app/game-config.json`
-  (board size, `cellSize`, `devPassword`). **Editing `./game-config.json` in the repo does not affect
-  the container.** To read or change the mounted copy, use
-  `docker compose cp blockboard:/app/game-config.json ./`, edit it, copy it back with
-  `docker compose cp ./game-config.json blockboard:/app/game-config.json`, then
-  `docker compose restart`.
-- The save lives in `/app/data` inside the container; compose maps it to `./data` on the host.
-  Nothing else needs persisting. On Linux the container runs as uid 1000, so if saves fail (check
-  the logs) run `sudo chown -R 1000:1000 ./data` once.
-- **Data backup / data import** in the settings dialog works inside the container too: the config is
-  a single mounted file, and Linux refuses to `rename` over a mount point (`EBUSY`), so the server
-  falls back to writing it in place.
-- The developer password can also be supplied through the `DEV_PASSWORD` environment variable (it
-  wins over the `devPassword` field) — see the comments in the compose file.
-
-> `game-config.json` is tracked in git (a local image build needs it). Your edited copy will keep
-> showing up as modified — don't commit your own `devPassword`. To keep a personal config out of
-> git, put it in `game-config.local.json` (already gitignored).
+> The developer password can also be supplied through the `DEV_PASSWORD` environment variable (it wins over the `devPassword` field) — see the comments in the compose file.
 
 ## Configuration
 
-The server reads `game-config.json` (the copy in the repo holds safe defaults, no password):
+The server reads `data/config/game-config.json` (seeded on first start from the
+`game-config.example.json` in the repo, which holds safe defaults and no password):
 
 | Name | Description |
 | --- | --- |

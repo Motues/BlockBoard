@@ -40,17 +40,17 @@
 - 浏览器 Console 无模块加载失败。
 - Network 面板：JS/CSS 是压缩后一行；响应带 `Cache-Control: no-cache`。
 - 普通刷新、强刷、改模块后刷新都不出现“新页面 + 旧模块”。
-- 没有 `game-config.json` 时首启能写出一份默认配置并正常起来（删掉文件重启即可验证）。
+- 生效配置 `data/config/game-config.json` 不存在时首启能自己生成一份并正常起来：有仓库里那份种子（`game-config.example.json`）就照抄，删掉两者才用 `DEFAULT_CONFIG`（删掉生效配置重启即可验证）。种子还在时改种子**不生效**。
 - 端口优先级：裸跑用配置里的 `port`；`PORT=xxxx` 时日志与 `listen` 都用环境变量那个（非法 `PORT` 退回配置文件并告警）。
 
 ### Docker
 
-- 本机装不了 Docker 时，至少核对 `Dockerfile` 里每个 `COPY` 的源文件都真的在仓库里（`dist` 由 builder 产出，`public`、`game-config.json`、`package.json` + `pnpm-lock.yaml` 来自上下文）。少一个文件不是构建失败在那一层，而是**加载构建定义时**就报 `"/xxx": not found`。
+- 本机装不了 Docker 时，至少核对 `Dockerfile` 里每个 `COPY` 的源文件都真的在仓库里（`dist` 由 builder 产出，`public`、`game-config.example.json`、`package.json` + `pnpm-lock.yaml` 来自上下文）。少一个文件不是构建失败在那一层，而是**加载构建定义时**就报 `"/xxx": not found`。
 - `docker build` 后启动，容器日志里端口是 `3000` 且 `from PORT environment variable`。
-- 改宿主机 `./game-config.json` 里的 `port` 成别的值，重启容器后监听端口仍是 3000。
+- 首启后宿主机出现 `./data/config/game-config.json`；改里面的 `port` 成别的值，重启容器后监听端口仍是 3000。
 - 导入一份 `port` 不同的备份：落盘的配置里 `port` 保持 3000，服务不用重启。
-- **导入存档必须能写进去**（Docker 回归点）：容器里导入 `.bbx`，日志里不能出现 `EBUSY ... rename '/app/game-config.json.tmp' -> '/app/game-config.json'`。`game-config.json` 是**单个文件挂载**（compose 里的命名卷 `game-config`，或 `./game-config.json:/app/game-config.json` 的绑定挂载）时，Linux 对挂载点的 `rename` 一律 `EBUSY`，靠 `writeFileAtomic()` 退回原地覆写兜底 —— 原地覆写这条路必须真的走到（日志会有一条 “writing it in place instead” 的警告）。把 `data/board-state.dat` 单独挂进来时自动存档同理。
-- 挂载 `/app/data`，重启容器后棋盘内容还在；容器以 uid 1000 运行，挂载目录要让它能写。
+- **导入存档必须能写进去**（回归点）：容器里导入 `.bbx`，日志里不能出现 `write-failed ... EBUSY`。配置在 `./data/config/` 里、只挂 `data/` 目录，正常情况不会被挂载点挡住；`writeFileAtomic()` 的原地覆写只是给「把 `game-config.json` 或 `board-state.dat` 当成单个文件挂进来」和只读根文件系统兜底（走到那条路时日志会有一条 “writing it in place instead”）。
+- 挂载 `/app/data`，重启容器后棋盘内容与配置都还在；容器以 uid 1000 运行，挂载目录要让它能写。
 
 ### 协议与同步
 

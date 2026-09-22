@@ -18,8 +18,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          body: "Release of version ${{ github.ref_name }}"
           draft: false
           prerelease: false
+          name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -20,7 +20,7 @@
         })();
     </script>
     <title>BlockBoard</title>
-    <link rel="stylesheet" href="styles.css?v=1.6.3">
+    <link rel="stylesheet" href="styles.css?v=1.7.0">
 </head>
 <body>
 
@@ -226,9 +226,11 @@
         <div id="settings-transfer-status" class="settings-transfer-status"></div>
 
         <div class="settings-actions">
+            <!-- 左下角：BlockBoard | v1.7.0。产品名固定链到仓库；版本号链到对应的 release 页
+                 （href 由 openSettingsPanel() 按 init-game 的 version 拼成 releases/tag/v<版本>，
+                 老服务端不发版本号就把分隔符和版本号一起藏起来） -->
             <div class="settings-made-by">
-                <span data-i18n="common.madeBy">Made by</span>
-                <a href="https://www.motues.top" target="_blank" rel="noopener">Motues</a>
+                <a href="https://github.com/Motues/BlockBoard" target="_blank" rel="noopener">BlockBoard</a><span id="settings-version-sep" hidden> | </span><a id="settings-version" href="https://github.com/Motues/BlockBoard/releases" target="_blank" rel="noopener" hidden></a>
             </div>
             <button type="button" id="settings-close" class="dev-btn" data-i18n="common.close">Close</button>
             <button type="button" id="settings-save" class="dev-btn dev-btn-primary" data-i18n="common.save">Save</button>
@@ -261,6 +263,6 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <!-- 客户端按功能拆成几个 ES 模块，入口是 js/main.mjs -->
-    <script type="module" src="js/main.mjs?v=1.6.3"></script>
+    <script type="module" src="js/main.mjs?v=1.7.0"></script>
 </body>
 </html>

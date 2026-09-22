@@ -13,6 +13,7 @@
 ```bash
 git clone https://github.com/Motues/BlockBoard.git
 cd BlockBoard
+vim game-config.example.json # 编辑配置文件
 pnpm install
 pnpm build
 pnpm start
@@ -20,35 +21,21 @@ pnpm start
 
 然后打开 http://localhost:3000
 
-（`game-config.json` 随仓库提供，按需改即可；删掉它重启会重新写一份默认配置。）
+> 生效的配置是 `data/config/game-config.json`：首次启动会把仓库里的 `game-config.example.json` 复制过去，以后改的是那一份；删掉它重启会从种子重新生成。
 
 ### Docker
 
 ```bash
-git clone https://github.com/Motues/BlockBoard.git
-cd BlockBoard
+wget https://raw.githubusercontent.com/Motues/blockboard/main/docker-compose.yml
 docker compose up -d
 ```
 
-- 镜像地址：`ghcr.io/motues/blockboard:latest`。容器**内部端口固定 3000**，改不了（`PORT` 环境变量优先级高于配置文件）。
-  换对外端口改 `docker-compose.yml` 里映射的左边，例如 `8080:3000`，然后访问 http://localhost:8080
-- 配置放在 Docker 命名卷 `game-config` 里，挂到容器的 `/app/game-config.json`（棋盘尺寸 / `cellSize` /
-  `devPassword` 都在里面）。**改仓库里的 `./game-config.json` 不影响容器**，要看 / 改容器里那份：
-  `docker compose cp blockboard:/app/game-config.json ./` 取出来，改完
-  `docker compose cp ./game-config.json blockboard:/app/game-config.json` 送回去，再 `docker compose restart`。
-- 棋盘存档在容器的 `/app/data`，compose 已经映射到宿主机的 `./data`。别的都不用持久化。
-  Linux 上容器以 uid 1000 运行，如果存档写不进去（日志里出现保存失败），执行一次：
-  `sudo chown -R 1000:1000 ./data`。
-- 设置弹窗里的**数据备份 / 数据导入**在容器里照常可用：`game-config.json` 是挂载进来的单个文件，
-  Linux 不允许 `rename` 覆盖挂载点（`EBUSY`），服务端写它时会退回原地覆写。
-- 开发者密码也可以用环境变量 `DEV_PASSWORD` 给（优先级高于配置里的 `devPassword`），见 compose 里的注释。
-
-> `game-config.json` 是进版本库的（自己构建镜像时要用到）。改过的本地配置会一直显示为 modified，
-> 别把自己的 `devPassword` 提交上去；想留一份自己的配置又不被跟踪，就放到 `game-config.local.json`（已在 `.gitignore` 里）。
+> 开发者密码也可以用环境变量 `DEV_PASSWORD` 给（优先级高于配置里的 `devPassword`），见 compose 里的注释。
 
 ## 配置
 
-服务端配置写在 `game-config.json`（随仓库提供的默认值都是安全的，不含密码）：
+服务端配置写在 `data/config/game-config.json`（首次启动从仓库里的 `game-config.example.json` 种子生成，
+默认值都是安全的、不含密码）：
 
 | 字段 | 说明 |
 | --- | --- |

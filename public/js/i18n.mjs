@@ -26,7 +26,6 @@ export const LANGUAGES = [
 const DICT = {
     en: {
         'common.online': 'Online',
-        'common.madeBy': 'Made by',
         'common.save': 'Save',
         'common.close': 'Close',
         'common.cancel': 'Cancel',
@@ -155,7 +154,6 @@ const DICT = {
     zh: {
         // 页脚和中英文保持一致：作者名不翻译
         'common.online': '在线人数',
-        'common.madeBy': 'Made by',
         'common.save': '保存',
         'common.close': '关闭',
         'common.cancel': '取消',
@@ -283,7 +281,6 @@ const DICT = {
 
     'zh-Hant': {
         'common.online': '線上人數',
-        'common.madeBy': 'Made by',
         'common.save': '儲存',
         'common.close': '關閉',
         'common.cancel': '取消',
@@ -411,7 +408,6 @@ const DICT = {
 
     ja: {
         'common.online': 'オンライン人数',
-        'common.madeBy': 'Made by',
         'common.save': '保存',
         'common.close': '閉じる',
         'common.cancel': 'キャンセル',
@@ -539,7 +535,6 @@ const DICT = {
 
     ko: {
         'common.online': '접속자 수',
-        'common.madeBy': 'Made by',
         'common.save': '저장',
         'common.close': '닫기',
         'common.cancel': '취소',

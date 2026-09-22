@@ -12,7 +12,3 @@ services:
     volumes:
       # 配置文件
       - ./data:/app/data
-      - game-config:/app/game-config.json
-
-volumes:
-  game-config:

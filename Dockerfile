@@ -1,5 +1,6 @@
 # 内部端口固定 3000：PORT 优先级高于 game-config.json 的 port（见 src/board-config.ts）。
-# game-config.json 会被 compose 绑定挂载，镜像里那份只是没有 compose 时的兜底。
+# 生效的配置是 data/config/game-config.json（随 data/ 一起挂载，见 docker-compose.yml 与
+# README 的 Docker 一节）；镜像里这份 game-config.example.json 只当首次启动的种子，同时供 tsc 取类型。
 
 FROM node:22-alpine AS builder
 
@@ -12,7 +13,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json ./
 COPY src ./src
-COPY game-config.json ./
+COPY game-config.example.json ./
 
 RUN pnpm run build
 
@@ -29,7 +30,8 @@ RUN apk --no-cache add ca-certificates tzdata \
 COPY --from=builder --chown=node:node /app/dist ./dist
 # public 不在 dist 里（没有打包步骤）
 COPY --chown=node:node public ./public
-COPY --chown=node:node game-config.json ./game-config.json
+# 首次启动的配置种子（同时也是 tsc 需要的类型来源）；之后以 data/config/game-config.json 为准
+COPY --chown=node:node game-config.example.json ./game-config.example.json
 COPY --chown=node:node package.json pnpm-lock.yaml ./
 
 RUN corepack enable \

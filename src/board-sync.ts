@@ -17,6 +17,7 @@ import {
   takePendingSquares
 } from './board-state';
 import { BLACK, CELL_BYTES, customValue, encodeRleBuffer, encodeStateBuffer, isCustomValue, toLegacyIndex } from './state';
+import { APP_VERSION } from './version';
 
 /** 超过这个体积的棋盘状态就走分块下发 */
 const CHUNK_THRESHOLD_BYTES = 96 * 1024;
@@ -163,6 +164,8 @@ export function broadcastRegion(
 function basePayload() {
   return {
     config: publicConfig(),
+    // 服务端版本号（设置弹窗左下角显示），取自 package.json；旧客户端忽略这个字段
+    version: APP_VERSION,
     black: BLACK,
     maxColorIndex: 15,
     rgbSupport: true,
