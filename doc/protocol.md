@@ -114,7 +114,7 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
 | `GET /api/dev/session` | – | `{ ok, enabled, active, config: { cols, rows } }`（尺寸取当前生效配置） |
 | `POST /api/dev/paint` | `{ x0, y0, x1, y1, color }` 或 `{ cells: [], color }` | 应用改动并返回 `{ ok, changed, range }`；503 未启用，401 token 失效 |
 | `POST /api/dev/draw` | `{ x, y, width?, height?, cells: [[值, …], …] }` | 逐格写入（每格可以不同取值）：导出的选区 JSON 就是同一个形状，`/llms.txt` 里给 AI 的绘图接口也是它。返回 `{ ok, changed, range: { start, width, height, runs } }`（**不带** `value` / `rgb` / `isBlack`，颜色在 `runs` 的每一段里）；400 `bad-shape` / `bad-value` / `out-of-range` / `too-large` |
-| `GET /llms.txt` | – | 静态文件（`public/llms.txt`）：给 AI 看的绘图接口说明，只讲怎么读尺寸、登录、`paint` / `draw` 与颜色编码；动态数据（棋盘尺寸）让它自己调 `GET /api/dev/session`，文件里不放密码 |
+| `GET /llms.txt` | – | 静态文件（`public/llms.txt`）：给 AI 看的绘图说明。**只讲免密的 socket.io 通道**（握手写法、`init-game` 读尺寸、`paint-square`、`paint-rejected` 令牌桶），HTTP 开发者接口一句带过、让开发者去找用户要密码；文件里不放密码、不写死棋盘尺寸 |
 | `POST /api/dev/export` | –（密码在 `x-dev-password`） | 返回打包文件（`application/octet-stream` + `Content-Disposition`）；401 密码错误，429 锁定，503 未启用 |
 | `POST /api/dev/import` | multipart 的 `package` 文件（密码在 `x-dev-password`，也接受表单 `password`） | 覆盖 `game-config.json` 与存档，返回 `{ ok, configBytes, saveBytes, cols, rows, sizeChanged }`；400 包损坏/配置非法/存档对不上，413 太大 |
 
@@ -128,13 +128,16 @@ RLE 紧凑状态：每个色块三个 varint `[跳过多少个黑格, 连续多�
 
 ## 给 AI 的绘图说明：/llms.txt
 
-`public/llms.txt` 是静态文件（`text/plain`，由 `serveStatic` 发出；`server.ts` 的 no-cache 中间件后缀白名单里加了 `txt`，改了立刻生效）。它只讲"怎么用 HTTP 在棋盘上画画"：
+`public/llms.txt` 是静态文件（`text/plain`，由 `serveStatic` 发出；`server.ts` 的 no-cache 中间件后缀白名单里加了 `txt`，改了立刻生效）。它讲的是**浏览器自己用的那条 socket.io 通道**（免密），不是 HTTP 开发者接口：
 
-- 先 `GET /api/dev/session` 拿当前 `cols` / `rows` —— 文件里不写死尺寸，导入换过尺寸也不会留下过期信息；也说明了没有"读回格子颜色"的接口，要还原画面得让用户从开发者工具导出选区 JSON。
-- 密码一律向用户索取：文件里不放 `devPassword`，也不放任何密钥，只说明去调 `POST /api/dev/login`。
-- `paint`（单色矩形 / 散落下标）与 `draw`（逐格二维数组）两个写接口、颜色编码（0 黑、1..15 预设、>= 16 为 24bit RGB）、预设色表、20 万格上限与"按行分块"的建议。
+- 接入方式：同源 `io(...)`，`auth` 必须回调式或对象式（4.8 不看返回值，写成 "返回对象" 会连不上），`caps` 可选。
+- 尺寸从 `init-game` 的 `config.cols` / `config.rows` 现读（导入换过尺寸也不会留下过期信息），`index = y * cols + x`；也说明了没有"读回格子颜色"的接口，要还原画面得让用户从开发者工具导出选区 JSON。
+- 写接口只有 `paint-square`：`{ index, rgb }`（`rgb: 0` 是擦黑；< 16 的 rgb 被 `customValue` 抬成 16，所以黑色只能用 0）或 `{ index, brush }`（预设编号，同色会擦黑）；`update-square` / `update-squares` / `update-region` / `paint-rejected` / `board-reset` 这些回包也列了。
+- **限流必须写在文件里**：每连接 `PAINT_BURST`(60) 容量、`PAINT_PER_SECOND`(30) 补充，超了静默丢并回 `paint-rejected`；说明按 ≤ 30 格/秒 发、被挡的下标要重排队不能死循环重试，并给出"100x100 约 5.5 分钟"这类量级，让 AI 知道大图该劝用户改用带密码的 HTTP 接口。
+- 颜色编码（0 黑、1..15 预设、>= 16 为 24bit RGB）与预设色表照旧，另附每色的十进制 `rgb` 值。
+- 密码一律向用户索取：文件里不放 `devPassword`，也不放任何密钥；HTTP 接口只提一句"要密码，向用户要"。
 
-改接口时必须同步改这个文件：它是 AI 看到的唯一文档。`/api/dev/draw` 的形状与选区 JSON 导出刻意保持一致（`{ x, y, width, height, cells }`），所以人导出的文件可以直接交给 AI，AI 画完也用同一条接口写回。
+改接口时必须同步改这个文件：它是 AI 看到的唯一文档。限流参数（`board-sync.ts` 的 `PAINT_BURST` / `PAINT_PER_SECOND`）与 `paint-square` 的取值规则动了也要改。`/api/dev/draw` 的形状仍与选区 JSON 导出保持一致（`{ x, y, width, height, cells }`），人导出的文件可以直接交给 AI、AI 也能用同一条 HTTP 接口写回（只是要密码）。
 
 ## 数据导出 / 导入：BBEX
 

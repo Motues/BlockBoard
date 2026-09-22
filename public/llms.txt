@@ -3,133 +3,125 @@
 BlockBoard is a shared real-time pixel board: a rectangular grid of square
 cells, each holding exactly one color. Coordinates are 0-based, `x` is the
 column and `y` is the row, and `(0, 0)` is the top-left corner of the board.
-Everything below is plain HTTP; no SDK, no WebSocket needed to draw.
 
-This file is the whole public API surface an AI agent needs. Board size, cell
-colors and the developer password are NOT in here on purpose - read the size
-from the API and ask the user for the password.
+Drawing is done over the same socket.io channel the browser page itself uses.
+There is no password on this channel: it is the live editing channel of the
+web page, open to every client that can open the page. No SDK, no HTTP, no
+token needed to draw.
 
-## 0. Before anything: ask the user for the developer password
+The rest of the HTTP developer API (`/api/dev/login`, `/api/dev/paint`,
+`/api/dev/draw`, ...) does need the developer password. This file deliberately
+does not cover it: ask the user if you need those endpoints.
 
-Writing to the board needs the developer password that was configured on the
-server (environment variable `DEV_PASSWORD`, or `devPassword` in
-game-config.json). Never guess it and never try to read it from the server.
-Ask the user for it, then follow `POST /api/dev/login` below.
+## 0. How to reach the channel
 
-## 1. Read the current board size
+Open a socket.io client (v4) at the SAME origin as this page - the page URL
+itself, default socket.io path `/socket.io/`. In a browser console you can
+just use `io`, because the page already loads socket.io-client:
 
-    GET /api/dev/session
+    const socket = io({
+        auth: (done) => done({ caps: ['rgb24', 'rle', 'bin', 'batch', 'chunk', 'sync'] })
+    });
 
-Example response:
+- `auth` MUST be written as a callback (`auth: (done) => done({...})`) or as a
+  plain object (`auth: { caps: [...] }`). An arrow function that *returns* an
+  object is silently broken in socket.io-client 4.8: the transport connects
+  (`socket.connected` stays false) but the CONNECT packet is never sent, so
+  `init-game` never arrives and nothing works.
+- The `caps` list is optional but recommended; it tells the server which
+  broadcast formats you understand. Without it you still get everything, just
+  in the oldest per-cell format.
+- `auth` may also carry `{ epoch, rev }` when you are re-attaching to state you
+  already hold, so the server can send only the difference. Omit both to get a
+  full board (the safe default).
+- No password, no cookie, no token is required for this channel.
 
-    { "ok": true, "enabled": true, "active": false,
-      "config": { "cols": 120, "rows": 80 } }
+## 1. Read the board size from the first message
 
-- `config.cols` / `config.rows` are the LIVE board size. It changes whenever an
-  admin imports a data package, so call this before drawing instead of
-  hard-coding a size.
-- `enabled: false` means this server has no developer password at all; HTTP
-  drawing is closed on it.
-- `active` only says whether the caller's token is still valid.
-- This endpoint needs no authentication.
-
-There is no endpoint that reads cell colors back. If you need to know what is
-already drawn, ask the user to right-click a selection in the browser developer
-tools and use "Export as JSON": that file has exactly the shape
-`POST /api/dev/draw` accepts, so you can edit and send it back.
-
-## 2. Log in and get a token
-
-    POST /api/dev/login
-    Content-Type: application/json
-
-    { "password": "<the developer password>" }
-
-Success:
-
-    { "ok": true, "token": "<64 hex chars>", "expiresAt": 1699999999999 }
-
-Send that token on every later request either as the header `x-dev-token:
-<token>` or as `Authorization: Bearer <token>`.
-
-- Tokens are kept in server memory: they expire after `devSessionHours`
-  (default 8 hours) and die when the server restarts. On
-  `401 { "error": "unauthorized" }` just log in again.
-- Five wrong passwords in a row from one IP lock that IP for 5 minutes
-  (`429 { "error": "locked" }`). Do not retry in a loop.
-- `503 { "error": "disabled" }` means this server has the developer tools
-  turned off; drawing over HTTP is not possible there.
-
-## 3. Draw
-
-All write endpoints answer JSON. Cell count limits are per request; a picture
-bigger than the limit has to be sent in horizontal bands.
-
-### 3a. One rectangle, one color
-
-    POST /api/dev/paint
-    x-dev-token: <token>
-    Content-Type: application/json
-
-    { "x0": 10, "y0": 5, "x1": 19, "y1": 14, "color": 16711680 }
-
-`x0..x1` / `y0..y1` are inclusive and are normalized for you (`x1` may be
-smaller than `x0`). Both corners must be inside the board, otherwise
-`400 { "error": "out-of-range" }`. At most 200000 cells per request
-(`width * height`), otherwise `400 { "error": "too-large" }`.
-
-The alternative array form paints a list of scattered cells with one color:
-
-    { "cells": [0, 1, 2, 140], "color": 0 }
-
-`cells` are flat cell indices, `index = y * cols + x`. Maximum 200000 entries.
-
-### 3b. Many cells, each with its own color (use this for pictures)
-
-    POST /api/dev/draw
-    x-dev-token: <token>
-    Content-Type: application/json
+Immediately after connecting, the server emits `init-game`:
 
     {
-      "x": 10,
-      "y": 5,
-      "cells": [
-        [16711680, 16711680, 0],
-        [0,        65280,    0]
-      ]
+      config: { cols: 120, rows: 80 },
+      version: "1.7.1",
+      epoch: 3, rev: 918,
+      stateMode: "inline" | "chunks" | "client",
+      stateRgb: "...", stateEncoding: "rle" | "rle-bin" | "dense" | "dense-bin"
     }
 
-`cells` is a row-major 2D array of cell values: the first inner array is the
-top row of the picture, and `(x, y)` is where the top-left corner of that array
-lands on the board. `width` and `height` are optional (they are derived from
-`cells`); if you send them they must match, otherwise
-`400 { "error": "bad-shape" }`. Every value must be an integer in
-`0 .. 16777215`, otherwise `400 { "error": "bad-value" }`.
+- `config.cols` / `config.rows` are the LIVE board size. Read them from here
+  every time instead of hard-coding a size: an admin can import a data package
+  that resizes the board (and changes `epoch`).
+- Valid cell indices are `0 .. cols * rows - 1`, with
+  `index = y * cols + x`.
+- `stateMode` tells you how the initial picture arrives: `inline` (it is in
+  this same message), `chunks` (followed by `state-chunk` ... `state-done`),
+  or `client` (the server thinks you already have it; then `sync-delta` /
+  `sync-done` follow). You do not have to decode any of it in order to draw -
+  ignore the state fields and just use `config`.
+- There is no "read cell colors back" call. If you need to know what is
+  already drawn, ask the user to right-click a selection in the browser
+  developer tools and use "Export as JSON"; that file is
+  `{ x, y, width, height, cells }` with a 2D array of values.
 
-Response:
+## 2. Draw: `paint-square`
 
-    { "ok": true, "changed": 6,
-      "range": { "start": 610, "width": 3, "height": 2, "runs": "..." } }
+Send one event per cell:
 
-- `changed` is how many cells really changed value (cells that already had that
-  color are skipped and do not count).
-- Ignore `range`: it is a local echo for the browser client.
-- Limits: at most 200000 cells per request (`width * height`), and the region
-  must fit inside the board (`x + width <= cols`, `y + height <= rows`) or you
-  get `400 { "error": "out-of-range" }`.
+    socket.emit('paint-square', { index: 610, rgb: 16711680 });
 
-Recommended procedure for a picture larger than 200000 cells:
+- `index = y * cols + x`.
+- Payload is either `{ index, rgb }` with a 24-bit color value (use this), or
+  `{ index, brush }` with a preset palette index `1 .. 15`.
+- `rgb: 0` erases the cell back to black. An rgb below `16` is clamped to
+  `16` by the server, so black can only be expressed as `0`.
+- Because this is the shared channel: `{ index, brush }` where the cell is
+  ALREADY that preset color erases it to black (that is the browser's
+  click-to-toggle behavior). With `rgb` the value is written directly - also
+  send `rgb: 0` to clear a cell, never "the same color again".
+- Out-of-range indices are dropped silently.
 
-1. `GET /api/dev/session` to read `cols` / `rows`.
-2. Cut the picture into horizontal bands of
-   `rows_per_request = floor(200000 / picture_width)` rows.
-3. Send each band with its own `y` (`band_index * rows_per_request`) and the
-   `x` you want, using `/api/dev/draw`.
-4. Prefer few large requests over thousands of tiny ones.
+The server answers on the same socket:
+
+| event | payload | meaning |
+| --- | --- | --- |
+| `update-square` | `{ index, value, rgb, isBlack, rev }` | your write (and every other user's) landed |
+| `update-squares` | `{ cells: [[index, value], ...], rev }` | many cells merged, if you declared `batch` |
+| `update-region` | `{ start, runs, ... }` | a big batch painted by the browser developer tools |
+| `paint-rejected` | `{ index }` | rate limit: this write was dropped, see section 3 |
+| `online-users` | number | connected clients |
+| `board-reset` | `{ config, epoch, rev, total }` | the board was replaced; drop your local `cols` / `rows` and re-read them |
+
+Counting `paint-rejected` is enough to know whether you are within the limit.
+You do not have to wait for `update-square` between writes.
+
+## 3. Rate limit - read this before drawing anything big
+
+The server enforces a **token bucket of 60 cells burst, refilling at 30 cells
+per second**, per connection. That is the whole budget for every client, and
+there is no batch event for writes: 40 events per second just gets the
+overflow dropped.
+
+- Keep a steady rate at or below **30 cells per second**. Bursts of up to 60
+  are fine, but the bucket only refills 30 per second, so a 1000-cell burst is
+  ~33 seconds of budget.
+- If you exceed it, the extra cells are silently dropped and come back as
+  `paint-rejected { index }`. Re-queue those indices; do not retry in a tight
+  loop - that just burns more tokens.
+- A rejected write did NOT happen. Track which of your indices were confirmed
+  (`update-square` / `update-squares`) or rejected, and only re-send the
+  rejected ones, still at <= 30/s.
+- Throughput reality check: at 30 cells/s a 100x100 picture needs ~5.5 minutes
+  and a 200x200 picture ~22 minutes. For anything bigger than a few thousand
+  cells, tell the user this channel is not the right tool and let them decide
+  (they can authenticate the HTTP developer API, or import the file through
+  their own browser).
+- Skipping cells that already have the color you want saves real budget: the
+  server reports `changed: 0` for no-op writes over HTTP, and for the socket it
+  simply costs you a token.
 
 ## 4. Cell values (colors)
 
-A cell value is a 24-bit integer:
+A cell value is a 24-bit integer (`rgb` in the payload):
 
 | value              | meaning                                             |
 | ------------------ | --------------------------------------------------- |
@@ -139,57 +131,75 @@ A cell value is a 24-bit integer:
 
 The preset palette the web UI shows (1 .. 8; 9 .. 15 are accepted but unused):
 
-| index | hex       | name       |
-| ----- | --------- | ---------- |
-| 1     | `#eeeeee` | off white (default) |
-| 2     | `#cbb9a3` | beige      |
-| 3     | `#c79a83` | terracotta |
-| 4     | `#b6bb92` | olive      |
-| 5     | `#9dba9c` | sage       |
-| 6     | `#9bb8bd` | teal       |
-| 7     | `#a6a8c0` | lavender   |
-| 8     | `#c4a5ae` | dusty rose |
+| index | hex       | name       | as `rgb`  |
+| ----- | --------- | ---------- | --------- |
+| 1     | `#eeeeee` | off white (default) | 15658734 |
+| 2     | `#cbb9a3` | beige      | 13351331 |
+| 3     | `#c79a83` | terracotta | 13081219 |
+| 4     | `#b6bb92` | olive      | 11975570 |
+| 5     | `#9dba9c` | sage       | 10336924 |
+| 6     | `#9bb8bd` | teal       | 10205373 |
+| 7     | `#a6a8c0` | lavender   | 10922176 |
+| 8     | `#c4a5ae` | dusty rose | 12887470 |
 
 Examples: red `#ff0000` = `16711680`, green `#00ff00` = `65280`,
 blue `#0000ff` = `255`, white `#ffffff` = `16777215`, erase to black = `0`.
-For an image, just convert every pixel to `r * 65536 + g * 256 + b`.
+For an image, convert every pixel to `r * 65536 + g * 256 + b` and send it.
 
-## 5. Complete example
+## 5. Complete example (browser worker, small picture)
 
-    # 1. size (no auth)
-    curl -s http://localhost:3000/api/dev/session
+Paste this into the page console (or run it from a `Worker`-less script on the
+same origin). It paints a 3x2 picture at (10, 5) at a safe rate:
 
-    # 2. log in -> copy "token" out of the reply
-    curl -s -X POST http://localhost:3000/api/dev/login \
-         -H 'Content-Type: application/json' \
-         -d '{"password":"YOUR_PASSWORD"}'
+    const socket = io({
+        auth: (done) => done({ caps: ['rgb24', 'rle', 'batch', 'chunk', 'sync'] })
+    });
 
-    # 3. draw a 3x2 picture at (10, 5)
-    curl -s -X POST http://localhost:3000/api/dev/draw \
-         -H 'Content-Type: application/json' \
-         -H 'x-dev-token: YOUR_TOKEN' \
-         -d '{"x":10,"y":5,"cells":[[16711680,16711680,0],[0,65280,0]]}'
+    socket.on('connect', () => console.log('connected, waiting for init-game'));
 
-    # 4. or flood one rectangle with black (erase)
-    curl -s -X POST http://localhost:3000/api/dev/paint \
-         -H 'Content-Type: application/json' \
-         -H 'x-dev-token: YOUR_TOKEN' \
-         -d '{"x0":0,"y0":0,"x1":9,"y1":9,"color":0}'
+    socket.on('init-game', ({ config }) => {
+        const { cols, rows } = config;
+        const picture = [
+            [16711680, 16711680, 0],
+            [0,        65280,    0]
+        ];
+        const x0 = 10, y0 = 5;
+        const jobs = [];
+        picture.forEach((row, dy) => row.forEach((rgb, dx) => {
+            const x = x0 + dx, y = y0 + dy;
+            if (x < 0 || y < 0 || x >= cols || y >= rows) return;
+            jobs.push({ x, y, index: y * cols + x, rgb });
+        }));
+
+        const pending = new Map();
+        socket.on('paint-rejected', ({ index }) => pending.set(index, true));
+
+        const step = () => {
+            const job = jobs.shift();
+            if (!job) return console.log('done, dropped:', pending.size);
+            pending.set(job.index, false);
+            socket.emit('paint-square', { index: job.index, rgb: job.rgb });
+            // 34 ms => ~29 cells/s, comfortably under the 30/s refill
+            setTimeout(step, 34);
+        };
+        step();
+    });
+
+    socket.on('board-reset', ({ config }) => {
+        console.log('board changed, new size:', config.cols, config.rows);
+    });
 
 ## 6. Rules of thumb
 
 - Every write is applied immediately and broadcast live to every connected
-  browser. There is no commit step.
+  browser. There is no commit step and no undo.
 - Changes are permanent; the server autosaves the board every 60 seconds.
-- Read `cols` / `rows` again if a request suddenly answers `out-of-range`: the
-  board may have been resized (all clients resync automatically, your token
-  stays valid).
-- Batch aggressively. There is no per-second rate limit on these HTTP
-  endpoints, but the server is a shared board, so keep the number of requests
-  low and the regions contiguous.
-- Do NOT call `POST /api/dev/export` or `POST /api/dev/import` unless the user
-  explicitly asks for a full backup or restore: they move whole files
-  (game-config.json + board save) and `import` overwrites the entire board.
-- Errors are always JSON: `{ "ok": false, "error": "<code>", "message": "..." }`
-  with HTTP status `400` (bad request), `401` (bad password / dead token),
-  `429` (locked out) or `503` (developer tools disabled).
+- Respect the 30 cells/s refill. Prefer sending fewer cells (skip no-ops, only
+  paint what differs from what you already know) over sending faster.
+- Read `config.cols` / `config.rows` again after a `board-reset`, or if writes
+  suddenly stop landing: the board may have been resized.
+- Do NOT flood the shared board. Several humans are editing the same canvas at
+  the same time; a multi-minute scripted fill is visible to all of them.
+- If you need the password-protected HTTP API (bulk `paint` / `draw`, data
+  export / import), the user has to give you the developer password. Ask for
+  it; never guess, and never try to read it from the server.
