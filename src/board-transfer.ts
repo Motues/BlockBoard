@@ -24,7 +24,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
-import { GameConfig, getTotalSquares, liveConfig, setLiveConfig } from './board-config';
+import { GameConfig, getTotalSquares, liveConfig, lockedConfigFields, setLiveConfig } from './board-config';
 import { gameConfigFilePath, writeGameConfig } from './board-persist';
 import { replaceGrid } from './board-state';
 import { decodeState, regridState } from './state';
@@ -44,6 +44,15 @@ const MAX_CELLS = 100_000_000;
 
 /** 导入时保留的字段：包里的值一律被服务器当前值覆盖 */
 const PRESERVED_FIELDS = ['devPassword'];
+
+/**
+ * 实际保留的字段 = PRESERVED_FIELDS + 被环境变量钉住的字段（PORT 已设置时的 `port`）。
+ * 容器里监听端口由部署方决定，一个来源不明的备份不该把它改到别的端口上 —— 那种情况下
+ * 端口要改只能改部署（改 PORT / 改端口映射），不能靠导入。
+ */
+function preservedFields(): string[] {
+  return lockedConfigFields.port ? [...PRESERVED_FIELDS, 'port'] : [...PRESERVED_FIELDS];
+}
 
 export interface PackageParts {
   /** game-config.json 的原文（UTF-8 JSON 文本） */
@@ -291,10 +300,11 @@ export function applyImport(raw: Buffer, onBoardReset?: () => void): ImportResul
   }
 
   // --- 3. 落盘：配置与状态 ---
-  // devPassword 沿用服务器当前的值；其它字段以包里的为准
+  // devPassword 沿用服务器当前的值；PORT 环境变量钉住时 port 也一样；其它字段以包里的为准
   const merged: GameConfig = { ...next };
+  const preserved = preservedFields();
 
-  for (const field of PRESERVED_FIELDS) {
+  for (const field of preserved) {
     const current = (liveConfig as Record<string, unknown>)[field];
     if (current === undefined) delete merged[field];
     else merged[field] = current;
@@ -315,7 +325,7 @@ export function applyImport(raw: Buffer, onBoardReset?: () => void): ImportResul
   }
 
   try {
-    setLiveConfig(merged, PRESERVED_FIELDS);
+    setLiveConfig(merged, preserved);
     replaceGrid(state || new Uint32Array(getTotalSquares()));
   } catch (error) {
     // 内存状态没能换过来：磁盘文件与运行期配置都还原回去，

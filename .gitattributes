@@ -1,0 +1,15 @@
+# Windows 上编辑、Linux 上跑（Docker / CI）：core.autocrlf=true 会把 shebang 存成 "#!/bin/sh\r"，
+# 容器里直接 exec format error；Dockerfile 的续行符后面跟 \r 也会解析出错。统一 LF。
+* text=auto eol=lf
+
+*.sh       text eol=lf
+Dockerfile text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

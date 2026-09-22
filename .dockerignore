@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+dist
+data
+.env
+.vscode
+.idea
+*.log
+*~
+.DS_Store
+Thumbs.db
+/doc/images
+/game-config.local.json

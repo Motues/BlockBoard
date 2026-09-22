@@ -1,0 +1,16 @@
+services:
+  blockboard:
+    image: ghcr.io/motues/blockboard:latest
+    container_name: blockboard
+    restart: always
+    ports:
+      # 换对外端口改左边，例如 "8080:3000"；右边 3000 是容器内部端口
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      # - DEV_PASSWORD=change-me
+    volumes:
+      # 容器以 uid 1000 跑；原生 Linux 上这个目录要归 uid 1000，见 README 的 Docker 一节
+      - ./data:/app/data
+      # 棋盘尺寸 / cellSize / devPassword 都在这里改
+      - ./game-config.json:/app/game-config.json

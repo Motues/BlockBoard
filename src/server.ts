@@ -14,7 +14,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Server } from 'socket.io';
 import http from 'http';
 import path from 'path';
-import { liveConfig, getTotalSquares } from './board-config';
+import { liveConfig, getTotalSquares, portSource } from './board-config';
 import { initBoardState, paintCells, paintRect, saveNow, startAutoSave } from './board-state';
 import { broadcastRegion, flushPending, initStateSync, resetBoardForClients } from './board-sync';
 import { registerDevApi, resolveDevPassword } from './dev-api';
@@ -116,10 +116,15 @@ initStateSync(io);
 })();
 
 // --- 开始监听 ---
+// 端口取的是 liveConfig.port，而它在 board-config.ts 里已经被 PORT 环境变量覆盖过
+// （容器里就是这么把内部端口钉在 3000 上的），这里不用再判断一次来源。
 // 放在状态、接口、socket 都准备好之后：早开一秒就可能有人带着
 // /api/dev/import 或一条 socket 消息打进来，而那时棋盘还没载入
 serverInstance.listen(liveConfig.port, () => {
   console.log(`BlockBoard run on http://localhost:${liveConfig.port}`);
+  console.log(
+    `Listen port ${liveConfig.port} (from ${portSource === 'env' ? 'PORT environment variable' : 'game-config.json'})`
+  );
   console.log(`Current grid: ${liveConfig.cols} x ${liveConfig.rows} (Total ${getTotalSquares()} squares)`);
 });
 

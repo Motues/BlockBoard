@@ -2,4 +2,8 @@
 /dist/
 /data/
 .env
-game-config.json
+
+# game-config.json 进版本库（compose 默认把它绑定挂载出来，clone 下来就能直接起）。
+# 改过的本地配置会一直显示为 modified，别把自己的 devPassword 提交上去；
+# 想留一份自己的配置又不被跟踪就放到 game-config.local.json。
+game-config.local.json

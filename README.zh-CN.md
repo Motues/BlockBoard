@@ -4,6 +4,8 @@
 
 [English](./README.md) | **中文**
 
+[演示站点](https://blockboard.motues.top)
+
 ![Index](./doc/images/index.png)
 
 ## 部署
@@ -11,15 +13,35 @@
 ```bash
 git clone https://github.com/Motues/BlockBoard.git
 cd BlockBoard
+cp game-config.json.example game-config.json # 根据需求修改
 pnpm install
 pnpm build
 pnpm start
 ```
 
-然后打开 http://localhost:33333
+然后打开 http://localhost:3000
 
-服务端在启动时会把客户端脚本与样式表压缩一遍（去注释、缩短变量名），浏览器拿不到带注释的源码。
-这一步不需要额外构建：`public/` 目录里仍然是可读的源码，启动日志里会打印省下了多少。
+（`game-config.json` 不存在时会自动照 `game-config.json.example` 生成一份，所以第一次也可以直接跳过 `cp` 那步。）
+
+### Docker
+
+```bash
+git clone https://github.com/Motues/BlockBoard.git
+cd BlockBoard
+docker compose up -d
+```
+
+- 镜像地址：`ghcr.io/motues/blockboard:latest`。容器**内部端口固定 3000**，改不了（`PORT` 环境变量优先级高于配置文件）。
+  换对外端口改 `docker-compose.yml` 里映射的左边，例如 `8080:3000`，然后访问 http://localhost:8080
+- 配置就挂在当前目录：直接改 `./game-config.json`（棋盘尺寸 / `cellSize` / `devPassword`），
+  改完 `docker compose restart` 生效。容器以非 root 的 uid 1000 运行，文件要让它读得到。
+- 棋盘存档在容器的 `/app/data`，compose 已经映射到宿主机的 `./data`。别的都不用持久化。
+  Linux 上容器以 uid 1000 运行，如果存档写不进去（日志里出现保存失败），执行一次：
+  `sudo chown -R 1000:1000 ./data`。
+- 开发者密码也可以用环境变量 `DEV_PASSWORD` 给（优先级高于配置里的 `devPassword`），见 compose 里的注释。
+
+> `game-config.json` 是进版本库的（`docker compose` 依赖它存在）。改过的本地配置会一直显示为 modified，
+> 别把自己的 `devPassword` 提交上去；想留一份自己的配置又不被跟踪，就放到 `game-config.local.json`（已在 `.gitignore` 里）。
 
 ## 配置
 
@@ -29,7 +51,7 @@ pnpm start
 | --- | --- |
 | `rows` / `cols` | 棋盘行数 / 列数 |
 | `cellSize` | 每个方块的像素尺寸 |
-| `port` | 服务端监听的端口 |
+| `port` | 服务端监听的端口。环境变量 `PORT` 优先级更高（Docker 部署就是用它把内部端口钉在 3000） |
 | `devPassword` | 开发者工具的密码。留空则关闭；环境变量 `DEV_PASSWORD` 优先级更高 |
 | `devSessionHours` | 开发者会话时长（小时，默认 8） |
 
@@ -37,9 +59,6 @@ pnpm start
 
 支持简体中文、繁體中文、English、日本語、한국어，首次按浏览器语言自动选择，
 之后可以在设置弹窗里改（设置里还有开发者密码和数据备份）。
-
-网络慢或棋盘很大时，打开页面会先显示一个加载动画（logo + 一圈转动的圆点），
-下面一行小字说明正在做什么；连不上服务器时会提示"仍在重试"。
 
 屏幕右下角有三个按钮：
 
@@ -55,8 +74,6 @@ pnpm start
 - **右键短按**（触屏**长按**）呼出画笔圆环选颜色，圆心可以选任意 RGB 颜色，
   调色盘里还有**取色器**（吸取画布上已有的颜色）和**最近使用**。
 - **右键拖动**平移棋盘，滚轮缩放；触屏是单指拖动、双指捏合。
-
-打开页面时还会自动弹出一次操作提示，随时点「菜单 → 显示帮助」可以再看。
 
 > **Edge 用户注意**：Edge 自带的鼠标手势会抢走右键拖动，网页关不掉。首次在桌面版 Edge
 > 打开时会弹出提示卡片，按上面的按钮去设置里关掉「启用鼠标手势」即可。
@@ -82,4 +99,4 @@ pnpm start
 
 ---
 
-架构设计、状态格式、Socket 协议与 HTTP 接口等实现细节见 [AGENT.md](./AGENT.md)。
+架构设计、状态格式、Socket 协议与 HTTP 接口等实现细节见 [AGENTS.md](./AGENTS.md)。

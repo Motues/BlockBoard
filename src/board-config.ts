@@ -4,8 +4,21 @@
 // 注意这里是**运行期可变**的：设置弹窗里的「数据导入」会把存档包里的
 // game-config.json 写回磁盘并立刻生效（见 board-transfer.ts 的 applyImport）。
 // 所以别把 rows / cols 缓存成常量 —— 用 getTotalSquares() / publicConfig() 取当前值。
+//
+// 本模块是全项目**第一个碰配置**的地方（server.ts 经由 board-state 间接导入它），
+// 所以「文件不在就照 example 生成一份」和「PORT 环境变量压过配置里的 port」都放在这里，
+// 这样其它模块 import 到的 liveConfig 一开始就已经是生效值。
 
-import rawConfig from '../game-config.json';
+import fs from 'fs';
+import path from 'path';
+// type-only import：只借它的类型，编译后不留 require（见下面的 loadConfig）
+import type configShape from '../game-config.json';
+
+/** 仓库根目录（ts-node 跑 src/ 与编译后跑 dist/ 都是一级） */
+const ROOT_DIR = path.join(__dirname, '..');
+/** game-config.json：没有就照 example 生成（board-persist.ts 的写盘用的是同一个路径） */
+const CONFIG_FILE = path.join(ROOT_DIR, 'game-config.json');
+const EXAMPLE_FILE = path.join(ROOT_DIR, 'game-config.json.example');
 
 /** game-config.json 的形状：服务端专用字段（devPassword）也在里面 */
 export interface GameConfig {
@@ -18,8 +31,97 @@ export interface GameConfig {
   [key: string]: unknown;
 }
 
+/**
+ * 这个字段被环境变量钉住了，导入存档包时不能改（见 board-transfer.ts）。
+ * 目前只有 PORT：容器里端口由部署方给定，不能让一个来源不明的备份把服务改到别的端口上。
+ */
+export interface LockedConfigFields {
+  /** PORT 环境变量给了合法端口，配置里的 port 一律忽略 */
+  port: boolean;
+}
+
+/**
+ * 首次启动（仓库里没有 game-config.json）：照 game-config.json.example 复制一份。
+ * 没有 example（或者写不进去）不是致命的 —— 随后的 loadConfig 会给出自己的报错。
+ * 已经存在就一个字节都不动。
+ */
+function ensureConfigFile(): void {
+  if (fs.existsSync(CONFIG_FILE)) return;
+
+  try {
+    fs.copyFileSync(EXAMPLE_FILE, CONFIG_FILE);
+    console.log('game-config.json was missing — created one from game-config.json.example');
+  } catch (error) {
+    console.error(
+      'game-config.json is missing and game-config.json.example could not be copied: ' +
+      `${(error as Error).message} / 缺少 game-config.json，且无法从 game-config.json.example 生成`
+    );
+  }
+}
+
+ensureConfigFile();
+
+/**
+ * 读配置文件。
+ * 这里**刻意不用** `import rawConfig from '../game-config.json'`：那是静态 require，
+ * 会在本模块（以及 ensureConfigFile）跑起来之前就执行，文件不存在时直接
+ * `MODULE_NOT_FOUND` 崩掉 —— 首启生成那一步就没机会跑了。
+ * 类型仍然取自那份 JSON（`import type` 编译后不留东西）。
+ */
+function loadConfig(): typeof configShape {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')) as typeof configShape;
+  } catch (error) {
+    throw new Error(
+      `Cannot read ${CONFIG_FILE} (${(error as Error).message}) / 读不到 game-config.json：` +
+      '确认它存在且是合法 JSON，或者参考 game-config.json.example 重新生成一份'
+    );
+  }
+}
+
 /** 当前生效的配置（含 devPassword，**不要**整个下发） */
-export let liveConfig = rawConfig as GameConfig;
+export let liveConfig = loadConfig() as GameConfig;
+
+/** 配置里写的端口（PORT 环境变量没给或给得不合法时用）*/
+function configPort(): number {
+  const value = Number(liveConfig.port);
+  return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : 3000;
+}
+
+/**
+ * 实际监听的端口：PORT 环境变量优先，其次 game-config.json 的 port。
+ * 给得不合法（不是 1..65535 的整数）就退回配置文件的值并打一条警告 ——
+ * 错的是配置，不该让服务起不来。
+ */
+function resolvePort(): { port: number; source: 'env' | 'config'; invalidEnv?: string } {
+  const fromEnv = typeof process.env.PORT === 'string' ? process.env.PORT.trim() : '';
+
+  if (fromEnv.length > 0) {
+    const value = Number(fromEnv);
+    if (Number.isInteger(value) && value >= 1 && value <= 65535) {
+      return { port: value, source: 'env' };
+    }
+
+    return { port: configPort(), source: 'config', invalidEnv: fromEnv };
+  }
+
+  return { port: configPort(), source: 'config' };
+}
+
+const resolvedPort = resolvePort();
+
+if (resolvedPort.invalidEnv !== undefined) {
+  console.warn(
+    `PORT="${resolvedPort.invalidEnv}" is not a valid port (1..65535): ` +
+    `falling back to game-config.json (${resolvedPort.port})`
+  );
+}
+
+/** 启动日志用：端口是从哪儿来的（env = PORT 环境变量，config = game-config.json） */
+export const portSource: 'env' | 'config' = resolvedPort.source;
+
+/** 环境变量钉住的字段：导入存档包时由 board-transfer.ts 保留服务器当前值 */
+export const lockedConfigFields: LockedConfigFields = { port: resolvedPort.source === 'env' };
 
 /** 当前棋盘总格数 */
 export function getTotalSquares(): number {
@@ -57,3 +159,7 @@ export function setLiveConfig(next: GameConfig, preserve: string[] = []): void {
   liveConfig = merged;
   clientConfig = withoutSecrets(liveConfig);
 }
+
+// PORT 环境变量优先：读进来的那份可能写着别的端口（容器里的 game-config.json
+// 就是照 example 生成的 3000），这里覆盖掉，之后所有读 liveConfig.port 的地方都是对的值。
+liveConfig.port = resolvedPort.port;

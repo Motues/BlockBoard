@@ -1,0 +1,47 @@
+
+# 架构总览
+
+## 项目结构
+
+服务端按功能拆分，依赖方向单向：
+
+`server` → `board-sync` → `board-state` → `board-persist` / `board-config`
+
+- `src/server.ts` —— 入口：Hono 应用、静态资源、socket.io 连线、启动与退出。只做装配。
+- `src/board-config.ts` —— 棋盘配置，以及可下发给客户端的配置（`publicConfig()` 剥离 `devPassword`）。敏感字段只有这一个出口。配置运行期可变，别把 `rows` / `cols` 缓存成常量，用 `liveConfig` / `getTotalSquares()` / `publicConfig()`。它还是**第一个碰配置**的模块，所以两件事放在这里：仓库里没有 `game-config.json` 时照 `game-config.json.example` 生成一份（Docker 镜像不带配置文件，靠这个首启开箱可用）；`PORT` 环境变量压过配置里的 `port`（Docker 靠它把内部端口钉在 3000）。配置**在运行期用 `fs.readFileSync` 读**，不用 `import rawConfig from '../game-config.json'` —— 静态 require 跑在首启生成之前，文件不存在时直接 `MODULE_NOT_FOUND`，生成那一步就没机会执行；类型仍由 `import type` 提供（编译后不留 require）。
+- `src/board-persist.ts` —— 存档读写（v3 / v2 / 老格式）与尺寸变更重排，以及把配置写回 `game-config.json`（`writeGameConfig`）。
+- `src/board-state.ts` —— 棋盘状态：格子数据、epoch / `syncRev`、全盘编码快照缓存、改色、广播合并、自动存档、导入整盘替换（`replaceGrid`）。不 import socket。
+- `src/board-sync.ts` —— socket.io 协议：首屏状态下发（单帧 / 分块 / 增量）、实时广播、增量日志、令牌桶、导入后的全员重同步（`resetBoardForClients`）。
+- `src/board-transfer.ts` —— 数据导出 / 导入的 BBEX 打包格式与导入应用 + 回滚。
+- `src/state.ts` —— 取值约定与编解码（24bit / 4bit / 1bit、RLE、批量差量 runs、重排）。编码先出 `Buffer`，字符串版只是 base64 包装；存档是带 magic、尺寸、epoch、rev 与 deflate 的 v3 格式（`buildSaveFile` / `parseSaveFile`，v2 也能读）。
+- `src/dev-api.ts` —— 开发者工具服务端：密码解析、密码换 token、token 校验、批量改色、数据导出 / 导入。
+- `src/minify.ts` —— 前端资源压缩：启动时用 esbuild 把 `public/` 下 js / css 去注释、压行、改局部变量名，结果常驻内存后由中间件发出。
+- `public/` —— 纯 ES module 客户端，无打包、无构建步骤，由 `public/index.html` 通过 `public/js/main.mjs` 加载。源码就是发给浏览器的那套的可读版本，压缩只发生在发送时。
+- `game-config.json` —— 棋盘尺寸、端口、开发者密码、会话时长。**进版本库**（compose 默认绑定挂载它，clone 下来就能起），仓库里那份是默认值、不含密码；启动时若文件不存在则照 `game-config.json.example` 生成。端口可被环境变量 `PORT` 覆盖（优先级更高），Docker 部署就是这么固定内部 3000 的。
+- `Dockerfile` / `docker-compose.yml` / `.dockerignore` —— 容器部署。内部端口固定 `3000`（`ENV PORT=3000`），`game-config.json` 与 `data/` 都挂载到宿主机；没有 entrypoint，直接 `USER node`（uid 1000）跑 `node dist/server.js`，所以挂载出来的 `data/` 要归 uid 1000。
+- `data/` —— 运行时生成的存档目录（`board-state.dat`、`board-size.json`），不进版本库。
+- `FEATURE.md` —— 还没做的同步优化（分块下发 / 增量同步 / 瓦片）。
+
+`board-state` 需要广播或写盘时，通过 `initBoardState()` 注入的回调（`onFlushPending` / `onPersist` / `onRegionPaint`）回调到 `server.ts`，不反向 import `board-sync`。
+
+> `init-game` 下发的 `config` 走 `publicConfig()`，不再包含 `devPassword`。以前直接 spread `game-config.json` 会把开发者密码明文发给每个客户端。加字段时注意别再把敏感项塞进 `gameConfig` 直接下发。
+
+## 静态资源与缓存
+
+`public/**` 由 `serveStatic` 托管；前面挂了一层中间件，给 `.html / .js / .mjs / .css / .json` 加 `Cache-Control: no-cache`。Hono 的 serveStatic 不发 ETag、也不处理条件请求，实际效果接近“每次都重新下载”，本地/局域网可忽略。
+
+为什么必须有：项目没有打包步骤，模块之间是裸相对路径 `import`（`./shared.mjs`），URL 上挂不了版本号。只靠 `Last-Modified` 的话，浏览器会启发式缓存旧模块，出现“新页面 + 旧模块”，整个模块图加载失败，表现是画布和在线人数都不出来。普通刷新未必恢复。踩过一次，别删这层中间件。
+
+前端还会显式报连接状态（`connection.mjs`）：`disconnect` / `connect_error` 时把在线人数显示成 `—` 并弹一次 toast（10 秒节流），这样“服务端没在运行”和“页面坏了”能一眼分开。
+
+## 前端资源压缩
+
+发给浏览器的 js / css 是运行时压过一遍的：启动时 `minifyPublicAssets()` 用 esbuild 的 `transform`（不打包）把 `public/js/*.mjs` 与 `public/styles.css` 逐个压成一行、去注释、局部变量改名，结果放进 `minified`，由挂在 `serveStatic` 之前的 `serveMinified()` 直接发出。实测 21 个文件 262 KB → 119 KB（-55%），启动几十毫秒，之后每个文件只压一次，全在内存。
+
+必须记住：
+
+- **中间件要在模块顶层 `app.use` 注册**，不能在压缩完成后再注册。Hono 中间件栈在第一个请求进来时就定下来，之后 `app.use` 不再生效。传进 `serveMinified()` 的是 `() => minified`，压完之前返回 `null`、请求回落源码。
+- `target` 必须 `esnext`：客户端有顶层 await，写 `es2020` 会报 “Top-level await is not available” 并跳过整个文件。
+- `charset` 必须 `utf8`：esbuild 默认 `ascii`，会把中日韩文案转 `\uXXXX`，`i18n.mjs` 压完反而更大。
+- 压缩只压不改结构：不打包，每个 `.mjs` 仍是独立 ES module，相对路径 import 照旧。跨模块导入/导出名保留原名，真正混淆需要打包成单文件，会改部署形态，没做。
+- 某个文件压失败只记日志并跳过，`minifyPublicAssets()` 不抛错；esbuild 是运行时依赖，放在 `dependencies`，生产装包只装 dependencies 时压缩才有效。

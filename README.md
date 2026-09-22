@@ -4,6 +4,8 @@ A real-time online block board
 
 **English** | [中文](./README.zh-CN.md)
 
+[Demo](https://blockboard.motues.top)
+
 ![Index](./doc/images/index.png)
 
 ## Deployment
@@ -11,16 +13,41 @@ A real-time online block board
 ```bash
 git clone https://github.com/Motues/BlockBoard.git
 cd BlockBoard
+vim game-config.json # 
 pnpm install
 pnpm build
 pnpm start
 ```
 
-Then open http://localhost:33333
+Then open http://localhost:3000
 
-The server minifies the client scripts and stylesheet (comments stripped, identifiers shortened)
-once at startup, so the browser never receives the commented source. Nothing needs to be built for
-that — `public/` stays readable on disk, and the startup log prints how much it saved.
+(If `game-config.json` is missing it is created from `game-config.json.example` on startup, so the
+`cp` step can be skipped on a first run.)
+
+### Docker
+
+```bash
+git clone https://github.com/Motues/BlockBoard.git
+cd BlockBoard
+docker compose up -d
+```
+
+- Image: `ghcr.io/motues/blockboard:latest`. The **internal port is fixed at 3000** and cannot be
+  changed from the config file (the `PORT` environment variable wins). To expose a different port,
+  edit the left side of the mapping in `docker-compose.yml`, e.g. `8080:3000`, then open
+  http://localhost:8080
+- The config is mounted from the current directory: edit `./game-config.json` (board size,
+  `cellSize`, `devPassword`) and run `docker compose restart`. The container runs as the non-root
+  uid 1000, so the file must be readable by it.
+- The save lives in `/app/data` inside the container; compose maps it to `./data` on the host.
+  Nothing else needs persisting. On Linux the container runs as uid 1000, so if saves fail (check
+  the logs) run `sudo chown -R 1000:1000 ./data` once.
+- The developer password can also be supplied through the `DEV_PASSWORD` environment variable (it
+  wins over the `devPassword` field) — see the comments in the compose file.
+
+> `game-config.json` is tracked in git (compose needs it to exist). Your edited copy will keep
+> showing up as modified — don't commit your own `devPassword`. To keep a personal config out of
+> git, put it in `game-config.local.json` (already gitignored).
 
 ## Configuration
 
@@ -30,7 +57,7 @@ The server reads `game-config.json` (see `game-config.json.example`):
 | --- | --- |
 | `rows` / `cols` | Number of rows / columns |
 | `cellSize` | Size of each block in pixels |
-| `port` | Port the server listens on |
+| `port` | Port the server listens on. The `PORT` environment variable wins over this field (the Docker image uses it to pin the internal port to 3000) |
 | `devPassword` | Password for the developer tools. Empty keeps them disabled; the `DEV_PASSWORD` environment variable wins over this field |
 | `devSessionHours` | How long a developer session stays valid, in hours (default 8) |
 
@@ -39,10 +66,6 @@ The server reads `game-config.json` (see `game-config.json.example`):
 Available in Simplified Chinese, Traditional Chinese, English, Japanese and Korean. The language
 follows the browser on the first visit and can be changed in the settings dialog, which also holds
 the developer password and the data backup.
-
-On a slow network or a large board, opening the page first shows a loading animation (the logo with
-a ring of rotating dots) and a line saying what is happening; if the server cannot be reached it says
-it is still retrying.
 
 Three buttons sit in the bottom-right corner:
 
@@ -59,8 +82,6 @@ Three buttons sit in the bottom-right corner:
   the middle picks any RGB color, and the picker also offers an **eyedropper** and **recent colors**.
 - **Drag with the right button** to pan, scroll to zoom; on touch screens, drag with one finger and
   pinch with two.
-
-A short help popup opens by itself on the first visit; *Menu → Show Help* brings it back at any time.
 
 > **On Edge:** the built-in mouse gestures take over right-button dragging and a page cannot turn them
 > off. On desktop Edge the first visit shows a hint card whose button opens the settings page — turn
@@ -94,5 +115,5 @@ above (no second password to type, but save it in the settings first).
 
 ---
 
-Architecture, state format, socket protocol and HTTP endpoints live in [AGENT.md](./AGENT.md)
+Architecture, state format, socket protocol and HTTP endpoints live in [AGENTS.md](./AGENTS.md)
 (Chinese).
