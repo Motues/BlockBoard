@@ -4,7 +4,7 @@
 
 | 事件 | 方向 | 载荷 |
 | --- | --- | --- |
-| `init-game` | server → client | `{ config, version, black, maxColorIndex, rgbSupport, epoch, rev, stateMode }` + 状态。`version` 是服务端 `package.json` 里的版本号（设置弹窗左下角显示 “BlockBoard \| v1.7.1”），老服务端不发，客户端就只显示产品名。`stateMode`：`inline`（`stateRgb` + `stateEncoding` 一条消息装下）、`chunks`（后面跟 `state-chunk` ... `state-done`）、`client`（本机已有状态，后面跟 `sync-delta` / `sync-done`）。声明 `bin` 时 `stateRgb` 是二进制附件，否则 base64；未声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
+| `init-game` | server → client | `{ config, version, black, maxColorIndex, rgbSupport, epoch, rev, stateMode }` + 状态。`version` 是服务端 `package.json` 里的版本号（设置弹窗左下角显示 “BlockBoard \| v1.7.2”），老服务端不发，客户端就只显示产品名。`stateMode`：`inline`（`stateRgb` + `stateEncoding` 一条消息装下）、`chunks`（后面跟 `state-chunk` ... `state-done`）、`client`（本机已有状态，后面跟 `sync-delta` / `sync-done`）。声明 `bin` 时 `stateRgb` 是二进制附件，否则 base64；未声明 `rgb24` 的旧页面收到旧字段 `state`（4bit base64） |
 | `state-chunk` | server → client | `{ seq, rowStart, rows, encoding, data }`。`encoding` 为 `rle` / `dense`（`-bin` 后缀表示二进制）；跳过计数相对本块起点，客户端按行偏移套用 |
 | `state-done` | server → client | `{ rev }`。分块下发收齐。客户端这时才认版本号，并回放缓冲的实时广播 |
 | `sync-delta` | server → client | `{ from, to, patches: [{ event, payload }, ...] }`。把日志里的状态变更按顺序重放，分批发送 |

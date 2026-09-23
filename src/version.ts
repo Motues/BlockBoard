@@ -1,5 +1,5 @@
 // 应用版本号：从 package.json 读一次，下发给客户端（init-game 的 version，见 board-sync.ts），
-// 设置弹窗左下角显示成 “BlockBoard | v1.7.1”。
+// 设置弹窗左下角显示成 “BlockBoard | v1.7.2”。
 //
 // 单独一个模块是因为它既不是运行期可变的棋盘配置（board-config.ts），也不该让 board-sync
 // 自己去碰文件；这里只依赖 fs / path，谁都能 import。
