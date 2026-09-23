@@ -1,8 +1,64 @@
 <!DOCTYPE html>
+<!-- lang 的初值是 en，与页面里写死的英文兜底文案一致；
+     运行期由 i18n.mjs 的 applyLang() 改成用户实际的语言（zh-CN / ja / ko …） -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <!-- 站点绝对地址：canonical / og:url / og:image / JSON-LD 共用这一个。
+         多域名部署（自建实例）时改这里，或者整段删掉（见 doc/frontend.md 的 SEO 小节） -->
+    <link rel="canonical" href="https://blockboard.motues.top/">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <!-- 标题里带上关键词：h1 是品牌名，说明文字全在 canvas 里，爬虫只能靠这里 -->
+    <title>BlockBoard</title>
+    <!-- description 控制在 ~155 字以内（超出会被搜索结果截断）；中文为主、英文关键词已进 keywords -->
+    <meta name="description" content="BlockBoard 是一个开源的多人实时协作像素画布：与全世界的玩家一起，在同一块棋盘上逐格涂色、缩放浏览、随时保存成图片。">
+    <meta name="keywords" content="BlockBoard,像素画,像素画布,协作画布,多人协作,实时协作,在线画板,pixel art,pixel canvas,collaborative canvas,multiplayer drawing,online whiteboard,open source">
+    <meta name="author" content="Motues">
+    <meta name="theme-color" content="#222222">
+
+    <!-- 分享卡片（Open Graph / Twitter Card） -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="BlockBoard">
+    <meta property="og:url" content="https://blockboard.motues.top/">
+    <meta property="og:title" content="BlockBoard · 多人协作像素画布">
+    <meta property="og:description" content="开源的多人实时协作像素画布：与全世界的玩家一起，在同一块棋盘上逐格涂色、缩放浏览、随时保存成图片。">
+    <meta property="og:image" content="https://blockboard.motues.top/assets/logo-light.svg">
+    <meta property="og:image:alt" content="BlockBoard">
+    <meta property="og:locale" content="zh_CN">
+    <meta property="og:locale:alternate" content="en_US">
+    <meta property="og:locale:alternate" content="ja_JP">
+    <meta property="og:locale:alternate" content="ko_KR">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="BlockBoard · 多人协作像素画布">
+    <meta name="twitter:description" content="开源的多人实时协作像素画布：与全世界的玩家一起，在同一块棋盘上逐格涂色、缩放浏览、随时保存成图片。">
+    <meta name="twitter:image" content="https://blockboard.motues.top/assets/logo-light.svg">
+
+    <!-- 结构化数据。页面主体是 canvas，没有可抓取的正文，所以这里描述的是
+         "这是个什么站点"、仓库在哪、支持哪些语言（改语言列表时这份也要跟着改） -->
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "WebApplication",
+            "name": "BlockBoard",
+            "url": "https://blockboard.motues.top/",
+            "description": "开源的多人实时协作像素画布，所有在线玩家在同一块棋盘上逐格涂色。",
+            "applicationCategory": "DesignApplication",
+            "operatingSystem": "Web",
+            "browserRequirements": "Requires JavaScript. Requires HTML5 canvas.",
+            "isAccessibleForFree": true,
+            "license": "https://github.com/Motues/BlockBoard/blob/main/LICENSE",
+            "codeRepository": "https://github.com/Motues/BlockBoard",
+            "inLanguage": ["zh-CN", "zh-Hant", "en", "ja", "ko"],
+            "offers": {
+                "@type": "Offer",
+                "price": "0",
+                "priceCurrency": "USD"
+            }
+        }
+    </script>
+
     <link id="favicon" rel="icon" href="./assets/logo-light.svg" type="image/svg+xml">
     <link rel="describedby" href="/llms.txt" />
     <script>
@@ -20,7 +76,7 @@
                                 : mq.addListener(e => apply(e.matches)));
         })();
     </script>
-    <title>BlockBoard</title>
+
     <link rel="stylesheet" href="styles.css?v=1.7.1">
 </head>
 <body>

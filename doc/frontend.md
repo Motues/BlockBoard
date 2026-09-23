@@ -11,7 +11,7 @@
 | `brush.mjs` | 当前画笔与最近颜色列表（持久化） |
 | `cursor.mjs` | CSS 光标：画笔圆点，取色模式下换成吸管 |
 | `board.mjs` | 棋盘状态解码（含二进制状态）、命中测试、悬停高亮、批量改色广播落地 |
-| `camera.mjs` | 视口、缩放/平移边界、棋盘坐标 ↔ 屏幕坐标 |
+| `camera.mjs` | 视口、缩放/平移边界、坐标换算；缩放平滑（目标值 + 每帧指数缓动）也在这里 |
 | `render.mjs` | 棋盘层离屏缓存、1 像素/格 LOD 位图、网格绘制、风车切换动画、PNG 导出、区域导出 |
 | `interactions.mjs` | 画布上的指针/触摸/滚轮输入，并把事件转发给开发者工具 |
 | `keyboard.mjs` | 键盘快捷键：Esc 逐层收起、C 调色盘、I 吸管、1–8 切预设色 |
@@ -113,6 +113,16 @@ Edge 自带「鼠标手势」是浏览器级功能：长按右键拖动会被 Ed
 - 动态文字一律 `t(key, params)`（`{name}` 占位符替换），必须在渲染时调用，不能把结果缓存成常量。
 - 语言切换走 `onLangChange(handler)`：`ring` / `picker` / `devtools` 注册回调后重绘自己的文字。静态文案（含 `edge-hint`）由 `applyStaticI18n()` 统一刷新。
 - 帮助弹窗 `#hint-popup` 有两份文案：`.hint-text-desktop` 与 `.hint-text-touch`，由 `showHintPopup()` 按 `shared.mjs` 的 `touchDevice` 给弹窗加 `touch` 类决定。键名分开（`hint.click` / `hint.zoom` / `hint.brush` / `hint.pan` / … 与 `hint.tap` / `hint.longPress` / `hint.drag` / `hint.pinch` / `hint.menu`），改操作方式两套都要动。
+- `<html lang>` 的初值是 `index.html` 里写死的 `en`（与页面里那份英文兜底文案一致），运行期由 `applyLang()` 按当前语言改写（`zh` → `zh-CN`，见 `HTML_LANG`）。
+
+## SEO / 分享元信息
+
+页面主体是 canvas、没有可抓取的正文，所以 `index.html` 的 `<head>` 里把能给的都显式写出来：`description` / `keywords` / `robots` + `canonical`、Open Graph 与 Twitter Card、以及一段 `application/ld+json`（`WebApplication`：名称、仓库、License、支持的语言）。
+
+- **`<title>` 里带关键词**（`BlockBoard · 多人协作像素画布 / Collaborative Pixel Art Canvas`）：`h1` 只有品牌名，标题是唯一能塞词的入口。改标题时别忘了同一份词在 `description` 里也要有。
+- **地址写死在 `https://blockboard.motues.top/`**：`canonical` / `og:url` / `og:image` / JSON-LD 共用这一个。自建实例改这一段（或者整段删掉）即可，没有运行期配置项。分享卡片用的是 `assets/logo-light.svg`（没有专门的 1200×630 大图；要更好的卡片就换一张光栅图并补 `og:image:width` / `og:image:height`）。
+- **静态文案不参与 i18n**：搜索爬虫不跑 JS，这些 meta 一律写中文 + 英文关键词，不进 `i18n.mjs`。改语言列表（`LANGUAGES`）时 JSON-LD 的 `inLanguage` 与 `og:locale:alternate` 要跟着改。
+- 没有 `robots.txt` / `sitemap.xml`（单页应用，一条 URL），也没有 `<noscript>` 内容块 —— 要加的话记得 `src/server.ts` 里那层 `no-cache` 中间件的后缀正则得带上 `xml`。
 
 ## 画布输入：桌面端与触屏
 
@@ -130,6 +140,17 @@ Edge 自带「鼠标手势」是浏览器级功能：长按右键拖动会被 Ed
 - 圆环模态：点圆环外只收起、不涂色（`markRingJustClosed()` → `interactions` 里 `consumeRingJustClosed()` 直接 return）；点色块仍正常选中（色块在 `#brush-ring` 内，`onPointerDown` 不会收它）。
 - 圆环里的点击（预设色块、圆心彩虹圆）在 `connection.mjs` 的 document 捕获监听里**必须直接放行**（`inRing` 就 return）：控件靠自己的 `click` 干活，如果这里对它们也 `stopPropagation`，触屏上点色块不换色、点圆心调色盘弹不出来 —— 桌面端看起来正常只是因为这层挡不住鼠标 click（触摸的 click 在鼠标事件之后，会被 `stopPropagation` 吞掉）。
 - 开发者模式下触屏不接管手势：长按/框选由 `devtools` 负责，这里只记 `pointerPhase`。
+
+## 缩放平滑
+
+缩放不直接把新比例写进 `viewState.scale`：滚轮与双指捏合都只调 `camera.mjs` 的 `zoomAtPoint()` 记下**目标值**，由 `updateZoomAnimation()` 在渲染循环的 `paint` 阶段每帧按指数缓动（时间常数 `ZOOM_CONFIG.SMOOTH_TAU`，120ms）把实际值推过去，收敛后自己收工（`needsMoreFrames` 返回 false，循环停转）。
+
+- **缓动在 `paint` 里推进**：`paint` 跑在本帧棋盘已经画完之后，改 `viewState` 只影响下一帧；放到 `render` 之前会让这一帧画出来的东西缺一块。
+- **平移按锚点解算**：动画对象里存锚点的屏幕位置与它对应的棋盘坐标（滚轮是光标、捏合是双指中点），每帧由 `scale` 反解 `translateX/Y`，所以整段动画期间光标底下那一格是钉住的，不会跑。锚点在动画期间固定（光标中途移动不重算），跟手的感觉交给下一次滚轮事件。
+- **滚轮连滚以目标值为基准**：`onWheel` 用 `getZoomTargetScale()`（动画没跑时就是实际缩放）乘以系数，滚 5 格与一次滚 5 格的总量一致；从 `viewState.scale` 起算会在动画没走完时被自己截断，快速滚动越滚越慢。
+- **手指/拖动接管时要 `cancelZoomAnimation()`**：`startPinch()`、`beginRightPan()` 与窗口 `resize`（视口变了，屏幕坐标的锚点就过期了）三处都调；不取消的话动画会继续改 `scale`，和用户刚做的平移打架、或者把画面往旧锚点飘。`resetView()` 也取消（它是瞬间到位，不走动画）。
+- 捏合不再自己算 `translateX/Y`：只把 `pinch.startScale * 距离比` 交给 `zoomAtPoint`，落点与滚轮完全同一套代码。`pinch` 状态里只留 `startDistance` / `startScale`。
+- 缩放期间不重算悬停格子：锚点钉住意味着光标底下还是那一格，只有"点棋盘旁边"的滚轮才会让高亮偏一小格，停手后移动一下鼠标就归位。
 
 ## 客户端开发者模式交互
 

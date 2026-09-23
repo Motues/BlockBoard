@@ -22,9 +22,11 @@ import { customValue, isCustomValue, rgbToHex, valueRgb } from './color.mjs';
 import { getGridState, hitTest, updateHover } from './board.mjs';
 import {
     calculateBoundaries,
+    cancelZoomAnimation,
     clampView,
     getMaxScale,
     getMinScale,
+    getZoomTargetScale,
     resizeCanvas,
     zoomAtPoint
 } from './camera.mjs';
@@ -51,7 +53,6 @@ import {
     setPinchState,
     socket,
     startSwitch,
-    viewport,
     viewState
 } from './shared.mjs';
 
@@ -334,6 +335,9 @@ function cancelDevPress() {
 
 // 右键按住到长按阈值：开始拖动棋盘
 function beginRightPan(x, y) {
+    // 拖动了就别让缩放动画继续改视图，两边的平移会互相打架
+    cancelZoomAnimation();
+
     suppressNextContextMenu = true; // 这一次右键不再是"短按"，别弹圆环
     rightPanning = true;
     viewState.panning = true;
@@ -481,16 +485,14 @@ function getTouchDistance(e) {
 
 // 以双指中点为锚点开始缩放
 function startPinch(e) {
-    const centerX = viewport.w / 2;
-    const centerY = viewport.h / 2;
+    // 手指接管：滚轮还没走完的缩放动画立刻让位
+    cancelZoomAnimation();
+
     const mid = getTouchMidpoint(e);
 
     updatePinchState({
         startDistance: Math.max(1, getTouchDistance(e)),
-        startScale: viewState.scale,
-        // 双指中点对应的棋盘坐标，缩放过程中保持这一点不动
-        localX: (mid.x - centerX - viewState.translateX) / viewState.scale,
-        localY: (mid.y - centerY - viewState.translateY) / viewState.scale
+        startScale: viewState.scale
     });
 
     viewState.panning = false;
@@ -530,26 +532,18 @@ function onTouchMove(e) {
 
         if (!pinch) startPinch(e);
 
-        const centerX = viewport.w / 2;
-        const centerY = viewport.h / 2;
         const mid = getTouchMidpoint(e);
         const distance = Math.max(1, getTouchDistance(e));
 
         // 缩放比例由双指间距变化决定，并限制在最小 / 最大范围内
+        // （不在这里写 viewState 了：捏合和滚轮一样走 zoomAtPoint 的平滑推进）
         const nextScale = clamp(
             pinch.startScale * (distance / pinch.startDistance),
             getMinScale(),
             getMaxScale()
         );
 
-        viewState.scale = nextScale;
-        // 双指中点移动时同时完成平移，缩放中心跟随手指
-        viewState.translateX = mid.x - centerX - pinch.localX * nextScale;
-        viewState.translateY = mid.y - centerY - pinch.localY * nextScale;
-
-        clampView();
-        markHoverDirty();
-        requestRender();
+        zoomAtPoint(nextScale, mid.x, mid.y);
         return;
     }
 
@@ -597,7 +591,11 @@ function onWheel(e) {
 
     // 指数缩放：每一次滚动的视觉变化量一致
     const factor = Math.exp(-delta * ZOOM_CONFIG.WHEEL_SENSITIVITY);
-    zoomAtPoint(viewState.scale * factor, e.clientX, e.clientY);
+
+    // 起点是"当前动画的目标值"而不是 viewState.scale：连着滚的时候每格都从
+    // 上一次的目标接着乘，滚 5 格与一次滚 5 格的量一致（否则动画没走完就被自己截断，
+    // 快速滚动会越滚越慢）。zoomAtPoint 里的锚点仍按当前实际缩放解算，所以不跳。
+    zoomAtPoint(getZoomTargetScale() * factor, e.clientX, e.clientY);
 }
 
 // --- 事件绑定 ---
@@ -634,6 +632,8 @@ export function bindCanvasEvents() {
 
     // 窗口大小变化时，重新校验缩放与位置，防止留在无效区域
     window.addEventListener('resize', () => {
+        // 视口变了，动画里的锚点（屏幕坐标）就过期了：直接收掉，避免画面往旧锚点飘
+        cancelZoomAnimation();
         resizeCanvas();
         clampView();
         markHoverDirty();

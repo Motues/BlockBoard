@@ -1,4 +1,6 @@
 // 相机：视口尺寸、缩放与平移的边界、坐标换算，以及"棋盘内部坐标 → 物理像素"的取整。
+// 缩放不是跳变的：滚轮 / 双指捏合只改"目标值"，由渲染循环每帧按指数缓动逼近，
+// 所以这个模块既算相机，也负责把缩放动画挂进渲染循环（见文件末尾）。
 
 import { MIN_LINE_PITCH, ZOOM_CONFIG } from './config.mjs';
 import {
@@ -7,9 +9,17 @@ import {
     clamp,
     markHoverDirty,
     requestRender,
+    setRenderHooks,
     viewport,
     viewState
 } from './shared.mjs';
+
+// 还没走完的缩放动画：
+//   targetScale        要收敛到的缩放倍数
+//   anchorX / anchorY  锚点在屏幕上的位置（CSS px，滚轮是光标、捏合是双指中点）
+//   localX / localY    锚点对应的棋盘坐标，动画期间始终钉在 anchor 上
+//   last               上一帧的时间戳（算 dt 用）
+let zoomAnim = null;
 
 // --- 画布尺寸 / 设备像素比 ---
 export function resizeCanvas() {
@@ -81,7 +91,9 @@ export function clampView() {
     viewState.translateY = clamp(viewState.translateY, bounds.minY, bounds.maxY);
 }
 
-// 以屏幕上的某个点为锚点缩放（滚轮缩放时，光标下的内容不会跑掉）
+// 以屏幕上的某个点为锚点缩放（滚轮缩放时，光标下的内容不会跑掉）。
+// 只把目标记下来，真正的推进交给 updateZoomAnimation —— 这样滚轮连滚是叠在一起的
+// 一段连续运动，而不是一格一跳。
 export function zoomAtPoint(targetScale, anchorX, anchorY) {
     const nextScale = clamp(targetScale, getMinScale(), getMaxScale());
     if (nextScale === viewState.scale) return;
@@ -92,18 +104,71 @@ export function zoomAtPoint(targetScale, anchorX, anchorY) {
     const localX = (anchorX - centerX - viewState.translateX) / viewState.scale;
     const localY = (anchorY - centerY - viewState.translateY) / viewState.scale;
 
-    viewState.scale = nextScale;
-    // 缩放后让同一个棋盘坐标重新落在锚点上
-    viewState.translateX = anchorX - centerX - localX * nextScale;
-    viewState.translateY = anchorY - centerY - localY * nextScale;
+    zoomAnim = {
+        targetScale: nextScale,
+        anchorX,
+        anchorY,
+        localX,
+        localY,
+        // 时间基准取"记下目标值的这一刻"：下一帧的 dt 才是真实间隔
+        last: performance.now()
+    };
 
-    clampView();
     markHoverDirty();
     requestRender();
 }
 
-// 恢复默认视图：100% 缩放并居中
+// 收掉还没走完的缩放动画。直接开始拖动 / 双指接管时必须调：
+// 否则动画还会继续改 scale，把手指刚做的平移一起带歪。
+export function cancelZoomAnimation() {
+    zoomAnim = null;
+}
+
+// 当前缩放的目标值：动画没在跑时就是实际缩放。
+// 滚轮连滚要基于它继续乘，而不是每次都从 viewState.scale 重算（见 interactions.mjs 的 onWheel）
+export function getZoomTargetScale() {
+    return zoomAnim ? zoomAnim.targetScale : viewState.scale;
+}
+
+// 缩放动画的推进：每帧把 scale 朝目标推进一段，并解算配套的平移。
+// 用指数缓动（时间常数 ZOOM_CONFIG.SMOOTH_TAU）而不是固定时长：
+//   · 与帧率无关，掉帧时也不会走过头；
+//   · 中途再次滚轮只是改目标值，运动自然续上，看不出接缝。
+// 平移按"锚点那块棋盘坐标钉在屏幕上不动"解算，所以整个动画期间光标底下那一点不跑。
+function updateZoomAnimation(now) {
+    if (!zoomAnim) return;
+
+    const active = zoomAnim;
+    const dt = clamp(now - active.last, 0, 48);
+    active.last = now;
+
+    const ratio = 1 - Math.exp(-dt / ZOOM_CONFIG.SMOOTH_TAU);
+    const from = viewState.scale;
+    let next = from + (active.targetScale - from) * ratio;
+
+    // 已经贴到目标值：收敛到精确值，这一帧算完就收工（下一帧不再自转）
+    if (Math.abs(active.targetScale - next) < 0.0005) {
+        next = active.targetScale;
+        zoomAnim = null;
+    }
+
+    viewState.scale = next;
+    if (zoomAnim) {
+        viewState.translateX = active.anchorX - viewport.w / 2 - active.localX * next;
+        viewState.translateY = active.anchorY - viewport.h / 2 - active.localY * next;
+    } else {
+        // 最后一帧：按缩放比例把平移一起缩放，锚点仍然不动（增量式，不必再解一次锚点）
+        const k = next / from;
+        viewState.translateX = viewport.w / 2 - (viewport.w / 2 - viewState.translateX) * k;
+        viewState.translateY = viewport.h / 2 - (viewport.h / 2 - viewState.translateY) * k;
+    }
+
+    clampView();
+}
+
+// 恢复默认视图：100% 缩放并居中（瞬间到位，没有平滑动画）
 export function resetView() {
+    cancelZoomAnimation();
     viewState.scale = clamp(1, getMinScale(), getMaxScale());
     viewState.translateX = 0;
     viewState.translateY = 0;
@@ -170,3 +235,13 @@ function cellBox(index, scale, origin) {
 
     return { x, y, w: right - x, h: bottom - y };
 }
+
+// 把缩放动画挂进渲染循环：
+//   · updateZoomAnimation 在 paint 阶段推进 —— 此时本帧的棋盘已经按"上一帧的相机"画完，
+//     改 viewState 只影响下一帧（若放到 render 之前，这一帧画出来的东西会缺一块）
+//   · needsMoreFrames 在动画没走完时让渲染循环继续自转（用 shared 的 scheduleFrame，
+//     不自增 boardRevision —— 相机每帧都在变，棋盘缓存本来就每帧重建）
+setRenderHooks({
+    paint: updateZoomAnimation,
+    needsMoreFrames: () => zoomAnim !== null
+});
